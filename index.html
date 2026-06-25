@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Third-Party Vendor Risk Assessment Tool</title>
+<style>
+  :root {
+    --bg: #0F172A;
+    --panel: #1E293B;
+    --accent: #2563EB;
+    --accent-light: #60A5FA;
+    --text: #E2E8F0;
+    --muted: #94A3B8;
+    --border: #334155;
+    --success: #16A34A;
+    --danger: #DC2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 20px 80px; }
+  h1 { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 32px; line-height: 1.5; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 28px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 16px; margin: 0 0 14px; color: var(--accent-light); }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input[type="file"], input[type="password"] {
+    width: 100%; padding: 10px 12px; background: #0B1220; border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 14px; margin-bottom: 16px;
+  }
+  .hint { font-size: 12px; color: var(--muted); margin-top: -10px; margin-bottom: 16px; line-height: 1.5; }
+  button {
+    background: var(--accent); color: white; border: none; padding: 12px 24px;
+    border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%;
+  }
+  button:hover { background: #1d4ed8; }
+  button:disabled { background: #475569; cursor: not-allowed; }
+  .progress-row { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); margin-top: 16px; }
+  .spinner {
+    width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent-light);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error { color: var(--danger); font-size: 13px; margin-top: 12px; }
+  .success-box { text-align: center; padding: 8px 0; }
+  .success-box h3 { color: var(--success); margin-bottom: 8px; }
+  .download-btn { background: var(--success); margin-top: 12px; }
+  .download-btn:hover { background: #15803d; }
+  .summary-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+  .summary-table th, .summary-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .tier-badge { padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; display: inline-block; }
+  .footer-note { font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 28px; text-align: center; }
+  a { color: var(--accent-light); }
+  .badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+  .pill { font-size: 11px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 20px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🛡️ Third-Party Vendor Risk Assessment</h1>
+  <p class="subtitle">
+    Upload your vendor list (Excel: <b>Vendor Name</b> + <b>Vendor Website Link</b> columns).
+    We'll run passive external OSINT scans, map findings against NIST, ISO 27001, DORA, and GDPR,
+    and generate a scored PDF report.
+  </p>
+  <div class="badge-row">
+    <span class="pill">No login required</span>
+    <span class="pill">Passive scans only</span>
+    <span class="pill">AI key optional</span>
+    <span class="pill">Max 25 vendors/run</span>
+  </div>
+
+  <div class="card" id="upload-card">
+    <h2>1. Upload Vendor List</h2>
+    <label for="file-input">Excel file (.xlsx)</label>
+    <input type="file" id="file-input" accept=".xlsx,.xls">
+    <div class="hint">Only the "Vendor Name" and "Vendor Website Link" columns are read; everything else is ignored.</div>
+
+    <label for="api-key-input">Claude API key (optional)</label>
+    <input type="password" id="api-key-input" placeholder="sk-ant-... (leave blank to use rule-based narratives)">
+    <div class="hint">
+      Your key is used only for this scan, sent directly to Anthropic's API, and never stored or logged on our server.
+      Without a key, the report still generates fully — narratives use a deterministic rule-based summary instead of AI-written prose.
+    </div>
+
+    <button id="scan-btn">Run Assessment</button>
+    <div id="progress-area"></div>
+    <div id="error-area"></div>
+  </div>
+
+  <div class="card" id="result-card" style="display:none;"></div>
+
+  <p class="footer-note">
+    External, passive assessment only — no port scanning or intrusive testing is performed against vendor infrastructure.
+    Results are a point-in-time snapshot and should supplement, not replace, formal vendor due diligence.
+  </p>
+</div>
+
+<script>
+const tierColors = {
+  "Critical Impact": "#B91C1C",
+  "High Impact": "#EA580C",
+  "Medium Impact": "#CA8A04",
+  "Unassigned — Manual Review Required": "#6B7280",
+  "Low Impact": "#16A34A",
+  "Informational": "#2563EB"
+};
+
+const scanBtn = document.getElementById('scan-btn');
+const fileInput = document.getElementById('file-input');
+const apiKeyInput = document.getElementById('api-key-input');
+const progressArea = document.getElementById('progress-area');
+const errorArea = document.getElementById('error-area');
+const resultCard = document.getElementById('result-card');
+
+scanBtn.addEventListener('click', async () => {
+  errorArea.innerHTML = '';
+  resultCard.style.display = 'none';
+  const file = fileInput.files[0];
+  if (!file) {
+    errorArea.innerHTML = '<div class="error">Please select an Excel file first.</div>';
+    return;
+  }
+
+  scanBtn.disabled = true;
+  progressArea.innerHTML = '<div class="progress-row"><div class="spinner"></div><span>Uploading and parsing vendor list...</span></div>';
+
+  const formData = new FormData();
+  formData.append('file', file);
+  if (apiKeyInput.value.trim()) {
+    formData.append('claude_api_key', apiKeyInput.value.trim());
+  }
+
+  try {
+    const resp = await fetch('/api/scan', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Scan failed to start.');
+
+    const jobId = data.job_id;
+    progressArea.innerHTML = `<div class="progress-row"><div class="spinner"></div><span>Scanning ${data.vendor_count} vendor(s)...</span></div>`;
+    await pollJob(jobId);
+  } catch (err) {
+    errorArea.innerHTML = `<div class="error">${err.message}</div>`;
+    scanBtn.disabled = false;
+    progressArea.innerHTML = '';
+  }
+});
+
+async function pollJob(jobId) {
+  while (true) {
+    await new Promise(r => setTimeout(r, 2000));
+    const resp = await fetch(`/api/jobs/${jobId}`);
+    const job = await resp.json();
+
+    if (job.status === 'failed') {
+      errorArea.innerHTML = `<div class="error">Scan failed: ${job.error || 'Unknown error'}</div>`;
+      scanBtn.disabled = false;
+      progressArea.innerHTML = '';
+      return;
+    }
+
+    progressArea.innerHTML = `<div class="progress-row"><div class="spinner"></div><span>${job.progress || job.status}</span></div>`;
+
+    if (job.status === 'complete') {
+      scanBtn.disabled = false;
+      progressArea.innerHTML = '';
+      showResults(jobId, job.summary || []);
+      return;
+    }
+  }
+}
+
+function showResults(jobId, summary) {
+  resultCard.style.display = 'block';
+  let rows = summary.map(v => {
+    const color = tierColors[v.tier] || '#94A3B8';
+    return `<tr>
+      <td>${v.name}</td>
+      <td>${v.score}/100</td>
+      <td><span class="tier-badge" style="background:${color}33;color:${color};">${v.tier}</span></td>
+    </tr>`;
+  }).join('');
+
+  resultCard.innerHTML = `
+    <div class="success-box">
+      <h3>✅ Assessment Complete</h3>
+      <p style="color:var(--muted);font-size:13px;">${summary.length} vendor(s) assessed.</p>
+    </div>
+    <table class="summary-table">
+      <thead><tr><th>Vendor</th><th>Score</th><th>Risk Tier</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <button class="download-btn" onclick="window.location.href='/api/jobs/${jobId}/report'">Download PDF Report</button>
+  `;
+}
+</script>
+</body>
+</html>

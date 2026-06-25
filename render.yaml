@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: vendor-risk-assessment-tool
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
