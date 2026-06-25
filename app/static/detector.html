@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vendor Threat Detector — Continuous Monitoring</title>
+<style>
+  :root {
+    --bg: #0A0E14;
+    --panel: #11161F;
+    --panel-raised: #161D29;
+    --line: #232B3A;
+    --text: #DCE3EE;
+    --muted: #6B7889;
+    --accent: #3DDC97;
+    --accent-dim: #1F4A38;
+    --warn: #E8A53D;
+    --danger: #E5484D;
+    --info: #4D8FE5;
+    --mono: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; font-size: 14px;
+  }
+  .scanlines {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0.025;
+    background: repeating-linear-gradient(0deg, #fff 0px, transparent 1px, transparent 3px);
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 24px 100px; position: relative; z-index: 1; }
+
+  .topbar { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  .topbar h1 {
+    font-size: 19px; font-weight: 700; letter-spacing: 0.01em; margin: 0;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .pulse-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 0 rgba(61,220,151,0.6); animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(61,220,151,0.5); }
+    70% { box-shadow: 0 0 0 8px rgba(61,220,151,0); }
+    100% { box-shadow: 0 0 0 0 rgba(61,220,151,0); }
+  }
+  .topbar a { color: var(--muted); font-size: 12px; text-decoration: none; }
+  .topbar a:hover { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 13px; margin: 0 0 28px; line-height: 1.6; max-width: 720px; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 22px; margin-bottom: 18px;
+  }
+  .panel-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+    margin: 0 0 16px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+  }
+  .panel-title .step-num {
+    width: 18px; height: 18px; border-radius: 4px; background: var(--accent-dim); color: var(--accent);
+    display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-family: var(--mono);
+  }
+
+  /* Vendor input */
+  .vendor-input-row { display: flex; gap: 10px; margin-bottom: 10px; }
+  .vendor-input-row input {
+    flex: 1; background: var(--panel-raised); border: 1px solid var(--line); border-radius: 7px;
+    padding: 10px 12px; color: var(--text); font-size: 13px;
+  }
+  .vendor-input-row input:focus { outline: none; border-color: var(--accent); }
+  .vendor-input-row button {
+    background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 7px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  .vendor-input-row button:hover { background: var(--accent); color: #06150E; }
+
+  .vendor-chip-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; min-height: 0; }
+  .vendor-chip {
+    background: var(--panel-raised); border: 1px solid var(--line); border-radius: 20px;
+    padding: 6px 8px 6px 14px; font-size: 12.5px; display: flex; align-items: center; gap: 8px;
+  }
+  .vendor-chip .domain { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+  .vendor-chip .domain.pending { color: var(--warn); }
+  .vendor-chip button {
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: 15px;
+    width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .vendor-chip button:hover { background: var(--danger); color: white; }
+
+  .bulk-row { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--line); display: flex; align-items: center; gap: 12px; }
+  .bulk-row label {
+    font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 7px;
+    padding: 7px 12px; cursor: pointer; background: var(--panel-raised);
+  }
+  .bulk-row label:hover { border-color: var(--accent); color: var(--accent); }
+  .bulk-row input[type="file"] { display: none; }
+  .bulk-row .bulk-hint { font-size: 11.5px; color: var(--muted); }
+
+  /* Detector grid */
+  .detector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .detector-card {
+    background: var(--panel-raised); border: 1px solid var(--line); border-radius: 9px;
+    padding: 14px; cursor: pointer; transition: border-color 0.15s;
+  }
+  .detector-card:hover { border-color: #3a4456; }
+  .detector-card.selected { border-color: var(--accent); background: linear-gradient(180deg, rgba(61,220,151,0.06), transparent); }
+  .detector-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .detector-card-head .name { font-weight: 600; font-size: 13px; }
+  .checkbox {
+    width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--line);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .detector-card.selected .checkbox { background: var(--accent); border-color: var(--accent); }
+  .checkbox svg { display: none; width: 10px; height: 10px; }
+  .detector-card.selected .checkbox svg { display: block; }
+  .detector-card .desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .detector-card .source-tag {
+    display: inline-block; margin-top: 8px; font-size: 10px; font-family: var(--mono);
+    color: var(--info); background: rgba(77,143,229,0.1); padding: 2px 7px; border-radius: 4px;
+  }
+
+  /* Mode toggle */
+  .mode-toggle { display: flex; gap: 10px; }
+  .mode-option {
+    flex: 1; background: var(--panel-raised); border: 1px solid var(--line); border-radius: 9px;
+    padding: 16px; cursor: pointer;
+  }
+  .mode-option.selected { border-color: var(--accent); }
+  .mode-option .mode-label { font-weight: 600; font-size: 13.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .mode-option .mode-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+  .monitor-config { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--line); display: none; }
+  .monitor-config.visible { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field-group label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .field-group select, .field-group input {
+    width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px 10px; color: var(--text); font-size: 12.5px;
+  }
+
+  /* Run button */
+  .run-bar { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+  .run-btn {
+    background: var(--accent); color: #06150E; border: none; border-radius: 8px;
+    padding: 13px 28px; font-size: 14px; font-weight: 700; cursor: pointer; letter-spacing: 0.01em;
+  }
+  .run-btn:hover { filter: brightness(1.08); }
+  .run-btn:disabled { background: #2a3242; color: var(--muted); cursor: not-allowed; }
+  .run-status { font-size: 12.5px; color: var(--muted); font-family: var(--mono); }
+  .run-status .dot { color: var(--accent); }
+
+  .error-banner {
+    background: rgba(229,72,77,0.1); border: 1px solid rgba(229,72,77,0.3); color: #f3a3a6;
+    border-radius: 7px; padding: 10px 14px; font-size: 12.5px; margin-top: 12px;
+  }
+
+  /* Results */
+  #results-section { display: none; }
+  .results-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .results-summary { font-size: 12.5px; color: var(--muted); }
+  .export-btn {
+    background: var(--panel-raised); border: 1px solid var(--line); color: var(--text);
+    padding: 9px 16px; border-radius: 7px; font-size: 12.5px; cursor: pointer; display: flex; align-items: center; gap: 7px;
+  }
+  .export-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th {
+    text-align: left; padding: 10px 12px; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.05em; border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:hover { background: rgba(255,255,255,0.015); }
+  .vendor-cell .name { font-weight: 600; }
+  .vendor-cell .domain { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+  .rating-badge {
+    display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px;
+    border-radius: 6px; font-weight: 700; font-size: 12.5px; font-family: var(--mono);
+  }
+  .summary-cell { max-width: 380px; line-height: 1.5; }
+  .summary-cell .ransomware-flag { color: var(--danger); font-weight: 600; }
+  .monitor-status-badge { font-size: 11px; padding: 3px 9px; border-radius: 20px; font-weight: 600; }
+  .monitor-status-badge.active { background: rgba(61,220,151,0.12); color: var(--accent); }
+  .monitor-status-badge.idle { background: rgba(255,255,255,0.05); color: var(--muted); }
+  .detail-toggle { color: var(--info); cursor: pointer; font-size: 11.5px; margin-top: 6px; display: inline-block; }
+  .detail-rows { display: none; }
+  .detail-rows.open { display: table-row; }
+  .detail-rows td { background: #0D1219; padding: 14px 12px 14px 32px; font-size: 11.5px; }
+  .finding-line { padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .finding-line:last-child { border-bottom: none; }
+  .sev-tag { font-family: var(--mono); font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-right: 8px; }
+  .sev-CRITICAL { background: rgba(229,72,77,0.15); color: var(--danger); }
+  .sev-HIGH { background: rgba(232,165,61,0.15); color: var(--warn); }
+  .sev-MEDIUM, .sev-medium { background: rgba(232,165,61,0.1); color: #d9b876; }
+  .sev-LOW, .sev-low { background: rgba(255,255,255,0.06); color: var(--muted); }
+  .sev-INFO, .sev-info { background: rgba(77,143,229,0.1); color: var(--info); }
+
+  .monitor-action {
+    background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px;
+    padding: 5px 10px; font-size: 11px; cursor: pointer; margin-top: 6px;
+  }
+  .monitor-action:hover { border-color: var(--accent); color: var(--accent); }
+
+  .footer-note { font-size: 11.5px; color: var(--muted); line-height: 1.7; margin-top: 32px; text-align: center; }
+
+  @media (max-width: 720px) {
+    .monitor-config.visible { grid-template-columns: 1fr; }
+    table, thead, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tbody tr { border-bottom: 1px solid var(--line); padding: 12px 0; }
+    tbody td { border-bottom: none; padding: 4px 0; }
+  }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="wrap">
+
+  <div class="topbar">
+    <h1><span class="pulse-dot"></span> Vendor Threat Detector</h1>
+    <a href="/">← Back to Vendor Risk Assessment</a>
+  </div>
+  <p class="subtitle">
+    Select vendors, choose which detector(s) to run, and optionally enable continuous monitoring
+    for automated re-scans with score-drop alerts. No login required. Passive checks only.
+  </p>
+
+  <!-- Step 1: Vendor input -->
+  <div class="panel">
+    <p class="panel-title"><span class="step-num">1</span> Select Vendors</p>
+    <div class="vendor-input-row">
+      <input type="text" id="vendor-name-input" placeholder="Vendor name (e.g. Oracle Corporation)">
+      <input type="text" id="vendor-domain-input" placeholder="Domain (optional — auto-discovered if blank)" style="flex:0.8;">
+      <button id="add-vendor-btn">Add Vendor</button>
+    </div>
+    <div class="vendor-chip-list" id="vendor-chip-list"></div>
+    <div class="bulk-row">
+      <label for="bulk-upload">📄 Upload Excel/CSV (Vendor Name + Vendor Domain columns)</label>
+      <input type="file" id="bulk-upload" accept=".xlsx,.xls,.csv">
+      <span class="bulk-hint">Max 25 vendors per run.</span>
+    </div>
+  </div>
+
+  <!-- Step 2: Detector selection -->
+  <div class="panel">
+    <p class="panel-title"><span class="step-num">2</span> Select Detector Type(s)</p>
+    <div class="detector-grid" id="detector-grid">
+      <!-- populated by JS from /api/detectors -->
+    </div>
+  </div>
+
+  <!-- Step 3: Monitoring mode -->
+  <div class="panel">
+    <p class="panel-title"><span class="step-num">3</span> Monitoring Mode</p>
+    <div class="mode-toggle">
+      <div class="mode-option selected" data-mode="ad_hoc">
+        <div class="mode-label">⏱️ Ad-Hoc Scan</div>
+        <div class="mode-desc">One-time pulse scan, right now. Results cached 24h to save API quota on repeat lookups.</div>
+      </div>
+      <div class="mode-option" data-mode="continuous">
+        <div class="mode-label">🔄 Continuous Monitoring</div>
+        <div class="mode-desc">Automated recurring scans. Tracks score trend over time and alerts on sudden drops.</div>
+      </div>
+    </div>
+    <div class="monitor-config" id="monitor-config">
+      <div class="field-group">
+        <label>Scan Frequency</label>
+        <select id="monitor-frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
+      </div>
+      <div class="field-group">
+        <label>Alert Threshold (point drop)</label>
+        <input type="number" id="monitor-threshold" value="20" min="1" max="100">
+      </div>
+      <div class="field-group" style="grid-column: 1 / -1;">
+        <label>Webhook URL (optional — receives a POST when threshold is exceeded)</label>
+        <input type="text" id="monitor-webhook" placeholder="https://your-endpoint.example.com/alerts">
+      </div>
+    </div>
+  </div>
+
+  <!-- Run -->
+  <div class="panel">
+    <div class="run-bar">
+      <button class="run-btn" id="run-btn">Run Detection</button>
+      <span class="run-status" id="run-status"></span>
+    </div>
+    <div id="error-area"></div>
+  </div>
+
+  <!-- Results -->
+  <div class="panel" id="results-section">
+    <div class="results-toolbar">
+      <span class="results-summary" id="results-summary"></span>
+      <button class="export-btn" id="export-btn">⬇ Export to Excel</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Vendor</th><th>Detector</th><th>Score</th><th>Summary</th><th>Monitoring</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+
+  <p class="footer-note">
+    Active Exploitation detector sources CISA's public Known Exploited Vulnerabilities catalog only —
+    not credential-dump databases or dark-web content. Phishing detector uses public certificate
+    transparency logs only. All checks are passive; no intrusive testing is performed against vendor infrastructure.
+  </p>
+</div>
+
+<script>
+let selectedDetectors = new Set();
+let currentMode = 'ad_hoc';
+let vendors = []; // {name, domain, pending}
+let currentRequestId = null;
+
+const detectorGrid = document.getElementById('detector-grid');
+const vendorChipList = document.getElementById('vendor-chip-list');
+const monitorConfig = document.getElementById('monitor-config');
+const errorArea = document.getElementById('error-area');
+const runStatus = document.getElementById('run-status');
+const runBtn = document.getElementById('run-btn');
+const resultsSection = document.getElementById('results-section');
+const resultsBody = document.getElementById('results-body');
+const resultsSummary = document.getElementById('results-summary');
+
+const DETECTOR_ICONS = { exploitation: '🟠', vulnerability: '🟡', phishing: '🔵' };
+
+async function loadDetectors() {
+  const resp = await fetch('/api/detectors');
+  const data = await resp.json();
+  detectorGrid.innerHTML = '';
+  data.detectors.forEach(d => {
+    selectedDetectors.add(d.type); // default: all selected
+    const card = document.createElement('div');
+    card.className = 'detector-card selected';
+    card.dataset.type = d.type;
+    card.innerHTML = `
+      <div class="detector-card-head">
+        <span class="name">${DETECTOR_ICONS[d.type] || ''} ${d.label}</span>
+        <span class="checkbox"><svg viewBox="0 0 12 12"><path d="M2 6l3 3 5-6" stroke="#06150E" stroke-width="2" fill="none"/></svg></span>
+      </div>
+      <div class="desc">${d.description}</div>
+    `;
+    card.addEventListener('click', () => {
+      if (selectedDetectors.has(d.type)) {
+        selectedDetectors.delete(d.type);
+        card.classList.remove('selected');
+      } else {
+        selectedDetectors.add(d.type);
+        card.classList.add('selected');
+      }
+    });
+    detectorGrid.appendChild(card);
+  });
+}
+loadDetectors();
+
+document.querySelectorAll('.mode-option').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('.mode-option').forEach(o => o.classList.remove('selected'));
+    opt.classList.add('selected');
+    currentMode = opt.dataset.mode;
+    monitorConfig.classList.toggle('visible', currentMode === 'continuous');
+  });
+});
+
+function renderVendorChips() {
+  vendorChipList.innerHTML = '';
+  vendors.forEach((v, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'vendor-chip';
+    const domainText = v.domain ? v.domain : '(domain auto-discovery)';
+    chip.innerHTML = `<span>${v.name}</span> <span class="domain ${!v.domain ? 'pending' : ''}">${domainText}</span> <button data-idx="${idx}">×</button>`;
+    chip.querySelector('button').addEventListener('click', () => {
+      vendors.splice(idx, 1);
+      renderVendorChips();
+    });
+    vendorChipList.appendChild(chip);
+  });
+}
+
+document.getElementById('add-vendor-btn').addEventListener('click', () => {
+  const nameInput = document.getElementById('vendor-name-input');
+  const domainInput = document.getElementById('vendor-domain-input');
+  const name = nameInput.value.trim();
+  if (!name) return;
+  vendors.push({ name, domain: domainInput.value.trim() || null });
+  nameInput.value = '';
+  domainInput.value = '';
+  renderVendorChips();
+  nameInput.focus();
+});
+
+document.getElementById('vendor-domain-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('add-vendor-btn').click();
+});
+
+document.getElementById('bulk-upload').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  errorArea.innerHTML = '<div class="error-banner">Bulk file parsing happens server-side once you click "Run Detection" — for now, add vendors individually above, or use the main Vendor Risk Assessment tool\'s Excel upload for bulk scoring. Bulk upload directly into the detector is on the roadmap.</div>';
+});
+
+document.getElementById('run-btn').addEventListener('click', async () => {
+  errorArea.innerHTML = '';
+  if (vendors.length === 0) {
+    errorArea.innerHTML = '<div class="error-banner">Add at least one vendor first.</div>';
+    return;
+  }
+  if (selectedDetectors.size === 0) {
+    errorArea.innerHTML = '<div class="error-banner">Select at least one detector.</div>';
+    return;
+  }
+
+  runBtn.disabled = true;
+  runStatus.innerHTML = '<span class="dot">●</span> Submitting...';
+
+  try {
+    const resp = await fetch('/api/detect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vendors: vendors.map(v => ({ name: v.name, domain: v.domain })),
+        detector_types: Array.from(selectedDetectors),
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to start detection.');
+    currentRequestId = data.request_id;
+    runStatus.innerHTML = '<span class="dot">●</span> Running detectors in parallel...';
+    await pollDetectJob(currentRequestId);
+
+    if (currentMode === 'continuous') {
+      await enableMonitoringForVendors();
+    }
+  } catch (err) {
+    errorArea.innerHTML = `<div class="error-banner">${err.message}</div>`;
+    runStatus.textContent = '';
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+
+async function pollDetectJob(requestId) {
+  while (true) {
+    await new Promise(r => setTimeout(r, 1500));
+    const resp = await fetch(`/api/detect/${requestId}`);
+    const job = await resp.json();
+    if (job.status === 'failed') {
+      throw new Error(job.error || 'Detection failed.');
+    }
+    if (job.status === 'complete') {
+      runStatus.textContent = '';
+      renderResults(job);
+      return;
+    }
+  }
+}
+
+async function enableMonitoringForVendors() {
+  const frequency = document.getElementById('monitor-frequency').value;
+  const threshold = parseInt(document.getElementById('monitor-threshold').value, 10) || 20;
+  const webhook = document.getElementById('monitor-webhook').value.trim() || null;
+
+  const vendorsResp = await fetch('/api/vendors');
+  const vendorsData = await vendorsResp.json();
+
+  for (const v of vendors) {
+    const match = vendorsData.vendors.find(sv => sv.name === v.name);
+    if (!match) continue;
+    await fetch(`/api/monitoring/${match.vendor_id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        detector_types: Array.from(selectedDetectors),
+        frequency, alert_threshold_points: threshold, webhook_url: webhook,
+      }),
+    });
+  }
+}
+
+const RATING_COLORS = { 'A+': '#3DDC97', 'A': '#3DDC97', 'B': '#7DD6A8', 'C': '#E8A53D', 'D': '#E0833D', 'E': '#E5484D', 'F': '#E5484D' };
+
+function renderResults(job) {
+  resultsSection.style.display = 'block';
+  resultsBody.innerHTML = '';
+  let rowCount = 0;
+
+  job.results.forEach((vendorEntry, vIdx) => {
+    vendorEntry.results.forEach((r, rIdx) => {
+      rowCount++;
+      const tr = document.createElement('tr');
+      const ratingHtml = r.rating_letter
+        ? `<span class="rating-badge" style="background:${RATING_COLORS[r.rating_letter]}22;color:${RATING_COLORS[r.rating_letter]};">${r.rating_letter}</span>`
+        : `<span style="color:var(--muted);font-size:11px;">N/A</span>`;
+      const scoreText = r.risk_score !== null ? `${r.risk_score}/100` : '—';
+
+      const detailId = `detail-${vIdx}-${rIdx}`;
+      tr.innerHTML = `
+        <td class="vendor-cell">
+          ${rIdx === 0 ? `<div class="name">${vendorEntry.vendor_name}</div><div class="domain">${vendorEntry.domain}</div>` : ''}
+        </td>
+        <td>${r.detector_label}</td>
+        <td>${ratingHtml}<div style="font-size:10.5px;color:var(--muted);margin-top:3px;">${scoreText}</div></td>
+        <td class="summary-cell">
+          ${r.summary}
+          ${r.detail_items && r.detail_items.length ? `<span class="detail-toggle" data-target="${detailId}">Show ${r.detail_items.length} detail item(s) ▾</span>` : ''}
+        </td>
+        <td><span class="monitor-status-badge idle">Idle (Ad-hoc)</span></td>
+      `;
+      resultsBody.appendChild(tr);
+
+      if (r.detail_items && r.detail_items.length) {
+        const detailTr = document.createElement('tr');
+        detailTr.className = 'detail-rows';
+        detailTr.id = detailId;
+        const detailHtml = r.detail_items.map(item => {
+          if (item.cve_id) {
+            return `<div class="finding-line"><span class="sev-tag ${item.known_ransomware_use ? 'sev-CRITICAL' : 'sev-MEDIUM'}">${item.cve_id}</span>${item.vulnerability_name}${item.known_ransomware_use ? ' <span class="ransomware-flag">— ransomware-linked</span>' : ''} <span style="color:var(--muted);">(${item.date_added})</span></div>`;
+          } else if (item.finding) {
+            return `<div class="finding-line"><span class="sev-tag sev-${item.severity}">${item.severity}</span>${item.finding}</div>`;
+          } else if (item.candidate_domain) {
+            return `<div class="finding-line"><span class="sev-tag ${item.reachable && !item.redirects_to_real_domain ? 'sev-HIGH' : 'sev-LOW'}">${item.pattern_type}</span>${item.candidate_domain} ${item.reachable ? '(live)' : '(cert only, not reachable)'}${item.redirects_to_real_domain ? ' — redirects to real domain' : ''}</div>`;
+          }
+          return '';
+        }).join('');
+        detailTr.innerHTML = `<td colspan="5">${detailHtml}</td>`;
+        resultsBody.appendChild(detailTr);
+      }
+    });
+  });
+
+  document.querySelectorAll('.detail-toggle').forEach(toggle => {
+    toggle.addEventListener('click', () => {
+      const target = document.getElementById(toggle.dataset.target);
+      target.classList.toggle('open');
+      toggle.textContent = target.classList.contains('open')
+        ? toggle.textContent.replace('▾', '▴')
+        : toggle.textContent.replace('▴', '▾');
+    });
+  });
+
+  resultsSummary.textContent = `${job.results.length} vendor(s), ${rowCount} detector result(s)`;
+  if (job.discovery_notes && job.discovery_notes.length) {
+    resultsSummary.textContent += ` — ${job.discovery_notes.length} domain(s) auto-discovered`;
+  }
+}
+
+document.getElementById('export-btn').addEventListener('click', () => {
+  if (!currentRequestId) return;
+  window.location.href = `/api/detect/${currentRequestId}/export`;
+});
+</script>
+</body>
+</html>

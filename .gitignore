@@ -3,6 +3,8 @@ __pycache__/
 .env
 generated_reports/
 *.pdf
+*.sqlite3
+*.db
 .DS_Store
 venv/
 .venv/

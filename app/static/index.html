@@ -96,6 +96,12 @@
 
   <div class="card" id="result-card" style="display:none;"></div>
 
+  <p style="text-align:center;margin-top:24px;">
+    <a href="/detector.html" style="color:var(--accent);font-size:13px;text-decoration:none;">
+      🛰️ Looking for the Vendor Threat Detector & Continuous Monitoring tool? →
+    </a>
+  </p>
+
   <p class="footer-note">
     External, passive assessment only — no port scanning or intrusive testing is performed against vendor infrastructure.
     Results are a point-in-time snapshot and should supplement, not replace, formal vendor due diligence.
@@ -196,6 +202,7 @@ function showResults(jobId, summary) {
       <tbody>${rows}</tbody>
     </table>
     <button class="download-btn" onclick="window.location.href='/api/jobs/${jobId}/report'">Download PDF Report</button>
+    <div class="hint" style="margin-top:10px;text-align:center;">For your confidentiality, this report is automatically deleted from our server 30 minutes after generation. Please download it now.</div>
   `;
 }
 </script>

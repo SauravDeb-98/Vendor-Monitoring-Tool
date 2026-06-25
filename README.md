@@ -209,15 +209,260 @@ built in regardless of whether a visitor supplies their own Claude key:
 These are configurable at the top of `app/main.py`
 (`RATE_LIMIT_MAX_REQUESTS`, `MAX_VENDORS_PER_RUN`).
 
+## Audit logging
+
+Every scan is recorded in a local SQLite file (`audit_log.sqlite3`,
+managed by `app/audit_log.py`) for accountability — "who ran what size
+scan, when, and what happened" — without storing the sensitive content of
+the scan itself.
+
+**What's logged:** timestamp, vendor *count* (not names), final status
+(complete/failed), error *type* only on failure (e.g. `TimeoutError`, never
+the full exception message), whether an AI key was used (boolean only),
+and one-way truncated SHA-256 hashes of the session cookie and IP address
+(not the raw values — these hashes can confirm "same visitor ran multiple
+scans" without being reversible back to the original cookie or IP).
+
+**What's never logged, by construction:** vendor names, vendor website
+URLs, scan findings, generated narrative text, or the Claude API key. The
+logging functions in `audit_log.py` don't accept those values as
+parameters at all, so a future code change elsewhere can't accidentally
+start logging them through this path. This was verified directly by
+running a real scan and grepping the raw `audit_log.sqlite3` file's bytes
+for the test vendor names/domains — confirmed absent.
+
+**Viewing the stats:** set an `ADMIN_STATS_TOKEN` environment variable on
+the server (in Render: Service → Environment → Add Environment Variable)
+to enable `GET /api/admin/stats` (returns 404 if unset). Call it with
+header `X-Admin-Token: <your token>` to get aggregate counts (total scans,
+breakdown by status, unique sessions, total vendors assessed) for a
+configurable time window (`?hours=24` by default). The endpoint returns
+counts only — never per-job detail that could be tied back to a specific
+visitor.
+
+**Durability caveat:** this uses local SQLite on disk. On Render's free
+tier, local disk is ephemeral — wiped on every redeploy and possibly on
+restarts/spin-downs. This gives you within-deployment accountability and
+basic usage analytics, not a durable, long-term audit trail suitable for
+compliance/legal retention. For that, point `DB_PATH` in `audit_log.py` at
+a persistent volume (Render's paid disk add-on) or swap the storage
+backend for an external database.
+
+## Encryption at rest
+
+Generated PDF reports are encrypted (Fernet — AES-128-CBC with HMAC-SHA256
+authentication, via the `cryptography` library) before being written to
+disk, and decrypted only in memory at the moment of serving a verified
+download to the job's owner. The on-disk file (`{job-id}.pdf.enc`) is
+opaque ciphertext — running `file` on it reports plain ASCII text, not
+"PDF document," and the raw bytes contain no PDF structural markers or
+vendor names. This was verified directly: a real scan was run, the
+on-disk file was inspected with `file` and `strings`, and decrypted
+output was confirmed to be a valid, fully readable PDF only through the
+proper authenticated download endpoint.
+
+**What this protects against:** casual/lazy disk exposure — a
+misconfigured backup snapshot, a log aggregator that slurps disk
+contents, anyone who can browse the filesystem but doesn't separately
+have the encryption key.
+
+**What this does NOT protect against:** a full compromise of the running
+server process itself. The key has to be available to the application
+automatically (there's no login step where a human enters a password to
+unlock it), so a sufficiently capable attacker with code-execution access
+to the live process could retrieve the key from its environment. This is
+the correct tradeoff for a public, no-login tool; full key isolation
+would require per-visitor secrets, which doesn't fit this app's design.
+
+**Setup:** generate a key and set it as `REPORT_ENCRYPTION_KEY` in
+Render's environment variables (Service → Environment → Add Environment
+Variable):
+```bash
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+If unset, the app auto-generates a fallback key at process startup (with a
+console warning) so it still runs — but that fallback key only lives in
+process memory and is lost on every restart, meaning reports encrypted
+with it become permanently undecryptable after a restart (the visitor
+sees a clear "please re-run the assessment" message in that case, not a
+crash). Setting the env var explicitly avoids this.
+
 ## Privacy notes
 
-- The optional Claude API key is read from the request body for that one
-  scan, used for narrative generation calls, and never written to disk,
-  logged, or stored beyond the lifetime of the request.
-- Generated PDF reports are stored on local disk under `generated_reports/`
-  keyed by a random job UUID. There's no cleanup job in this version —
-  for a long-running public deployment, add a periodic sweep (e.g. delete
-  files older than 24h) before relying on this for sensitive vendor data.
+- **Uploaded Excel files are never written to disk.** The uploaded bytes
+  are read directly into memory (`file_bytes = await file.read()` in
+  `app/main.py`) and passed straight to the parser; there is no file-write
+  call anywhere in that code path. Once the request handler returns, the
+  bytes are garbage collected.
+- **The optional Claude API key is never written to disk.** It's read from
+  the request body for that one scan, used for narrative generation calls,
+  and discarded — never logged or stored beyond the lifetime of the
+  request.
+- **Generated PDF reports ARE written to disk, but encrypted** (under
+  `generated_reports/` as `{job-id}.pdf.enc`, ciphertext only — see
+  "Encryption at rest" above for the full design and key management).
+  A background sweep task (`_cleanup_expired_reports` in `app/main.py`)
+  runs every 2 minutes and deletes any report older than
+  `REPORT_RETENTION_MINUTES` (default: 30). After deletion, the download
+  endpoint returns HTTP 410 Gone with a message explaining the report
+  expired, rather than a confusing file-not-found error. This window is
+  configurable at the top of `app/main.py`.
+- **Vendor names and website URLs from the upload are held in server
+  memory** (the in-memory `_jobs` dict) for the lifetime of that job, and
+  are not separately persisted beyond what's baked into the generated PDF
+  itself — once the PDF is deleted, no other on-disk copy of that vendor
+  list remains. Memory contents do not survive a server restart.
+- **Each browser session is bound to its own jobs via an HttpOnly session
+  cookie**, issued automatically on first contact with `/api/scan`. Every
+  job is tagged with the session that created it, and both the job-status
+  (`GET /api/jobs/{id}`) and report-download (`GET /api/jobs/{id}/report`)
+  endpoints verify the requester's cookie matches the job's owner before
+  returning anything — HTTP 403 otherwise, with an identical generic error
+  whether the job doesn't exist or simply isn't yours, so the API doesn't
+  leak which job IDs are valid. This means a visitor who somehow learns or
+  guesses another job's UUID during the 30-minute retention window still
+  cannot view its status or download its report. The cookie itself is
+  HttpOnly (inaccessible to JavaScript), SameSite=Lax, and Secure when
+  served over HTTPS (which Render's default deployment provides — the
+  Dockerfile runs uvicorn with `--proxy-headers --forwarded-allow-ips=*`
+  so it correctly detects HTTPS via Render's edge proxy). This protection
+  does not survive clearing cookies or switching devices/browsers — that's
+  an intentional tradeoff, since there's no shared secret to leak instead.
+  Sessions are stored in-memory and do not survive a server restart or
+  scale past a single server instance; a multi-instance deployment would
+  need a shared session store (e.g. Redis) instead.
+- Render's own infrastructure (disk, logs, network) is a third party in
+  this picture: the app's own code does not persist data beyond the
+  windows described above, but the underlying hosting platform's general
+  operational logging is outside this project's control.
+
+## Vendor Threat Detector & Continuous Monitoring
+
+A second tool, available at `/detector.html`, alongside the original
+vendor risk report tool. It lets you select vendors, choose which
+detector(s) to run, and optionally enable continuous monitoring with
+score-drop alerts — a Black-Kite-style ongoing tracking workflow rather
+than a one-off report.
+
+### Detectors (3, not 4 — see naming note below)
+
+| Detector | What it actually checks | Data source |
+|---|---|---|
+| **Active Exploitation & Advisory Detector** | Confirmed, actively-exploited CVEs and ransomware-campaign links associated with the vendor | CISA's public Known Exploited Vulnerabilities (KEV) catalog |
+| **Vulnerability & Exploit Scanner** | TLS/certificate health, HTTP security headers, DNS email-auth records, publicly disclosed CVEs | Same passive scan engine as the original vendor risk report tool |
+| **Phishing & Brand Impersonation Detector** | Plausible lookalike/typosquat domains with evidence of live, certificate-backed infrastructure | Public Certificate Transparency logs (crt.sh) |
+
+**Naming note — read this before expecting breach/dark-web detection:**
+The original feature request specified four detectors, including a "Data
+Breach Detector" (checking for exposed credentials/leaked databases) and
+an "Incident & Ransomware Tracker" (checking dark-web extortion notices).
+Both were intentionally not built as specified. Querying credential-dump
+databases or dark-web extortion content means building infrastructure for
+accessing stolen data and criminal markets — that's not something this
+codebase implements, regardless of the defensive framing. Those two slots
+were merged into the single **Active Exploitation & Advisory Detector**,
+named for what it actually measures (CISA's own public confirmed-active-
+exploitation data, including a `knownRansomwareCampaignUse` flag — a
+real, legitimate, public answer to the "ransomware" part of the original
+ask) rather than implying breach-news monitoring it cannot do. CISA's KEV
+catalog is fetched from the [cisagov/kev-data GitHub
+mirror](https://github.com/cisagov/kev-data), which CISA documents as
+staying in sync with cisa.gov within minutes — used instead of the
+canonical cisa.gov URL because it's a more universally allowlist-friendly
+HTTPS host for outbound requests from a server environment.
+
+### Domain auto-discovery fallback
+
+If a vendor is submitted with only a name and no domain, the app tries
+the vendor-name-as-slug pattern against `.com`/`.net`/`.io`/`.co`/`.org`
+and confirms each candidate via a real DNS + HTTPS reachability check
+before accepting it (`app/domain_discovery.py`). This deliberately does
+NOT call a general web search API (kept the feature zero-signup per
+project scope), so it's weaker than a true search-based lookup for
+generic or ambiguous vendor names — results carry a confidence level
+("medium" for a confirmed `.com` match, "low" otherwise, "none" if
+nothing resolved) and the UI surfaces which domains were auto-discovered
+rather than silently trusting a guess.
+
+### Continuous monitoring
+
+Selecting "Continuous Monitoring" instead of "Ad-Hoc Scan" persists a
+monitoring configuration (`app/monitoring/store.py`, SQLite-backed) for
+each selected vendor: which detector(s), how often (daily/weekly), and
+the score-drop point threshold that should trigger an alert. A background
+scheduler (`app/monitoring/scheduler.py`) polls every 5 minutes for
+vendors due for a re-scan, runs the same detector code used for ad-hoc
+scans, records the result in a score-history table, and — if the
+**Vulnerability & Exploit Scanner**'s score drops by at least the
+configured threshold versus its last recorded value — fires a webhook
+POST and logs an alert. (Only that detector currently produces a
+comparable 0–100 score; the exploitation and phishing detectors report
+findings rather than a single posture score, so they cannot trigger a
+score-drop alert by definition.)
+
+**Email alerts are not implemented.** The `notify_email` field is stored
+but not actionable — sending real email requires choosing and
+configuring a provider (SendGrid, Postmark, SES, etc.) with its own API
+key, which this codebase doesn't have and shouldn't silently choose on
+your behalf. Webhook delivery is fully functional today; see
+`app/monitoring/notifications.py` for exactly what's needed to add email
+once you pick a provider.
+
+**Monitoring config ownership:** the same session-cookie model used
+elsewhere in this app protects monitoring configs — once a real session
+has set up monitoring for a vendor, only that session can modify or
+cancel it (verified directly: a second, genuinely distinct session
+attempting to delete another session's monitoring config receives a 403).
+A config that was never claimed by any session (e.g., set up by a raw API
+call with no cookie) has no enforceable owner until the first real
+session establishes one.
+
+### 24-hour result caching
+
+Ad-hoc detector results are cached in-memory per (domain, detector) pair
+for 24 hours (`app/detector_cache.py`), so repeated lookups of the same
+vendor reuse the prior result instead of re-querying CISA/crt.sh —
+per the spec's requirement to optimize external API usage. Continuous
+monitoring's scheduled runs always bypass this cache, since the entire
+point of a scheduled run is to capture a fresh data point.
+
+### Excel export
+
+A completed ad-hoc detection job can be exported to `.xlsx`
+(`GET /api/detect/{request_id}/export`, wired to the "Export to Excel"
+button in the UI) with one row per vendor-detector combination: Vendor
+Name, Domain, Detector Applied, Risk Score, Rating, Incident Summary,
+Monitoring Status (live-linked to whether that vendor currently has
+continuous monitoring enabled), and Timestamp — matching the columns
+specified in the original feature request.
+
+### API endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/detectors` | List available detector types |
+| POST | `/api/detect` | Start an ad-hoc detection job |
+| GET | `/api/detect/{request_id}` | Poll job status/results |
+| GET | `/api/detect/{request_id}/export` | Export completed job to Excel |
+| POST | `/api/vendors/discover-domain` | Domain auto-discovery for a name-only vendor |
+| GET | `/api/vendors` | List vendor inventory |
+| POST | `/api/monitoring/{vendor_id}` | Create/update continuous monitoring |
+| GET | `/api/monitoring/{vendor_id}` | Get monitoring config + score history |
+| DELETE | `/api/monitoring/{vendor_id}` | Stop continuous monitoring |
+| GET | `/api/monitoring` | List all continuously-monitored vendors |
+| GET | `/api/alerts` | List recent score-drop alerts |
+
+### Storage caveat (same as audit_log.py)
+
+`monitoring.sqlite3` is a separate local SQLite file from
+`audit_log.sqlite3`, kept apart deliberately since the two stores serve
+different purposes (operational monitoring data vs. privacy-preserving
+usage accountability). Like the audit log, it lives on Render's free-tier
+ephemeral disk — wiped on every redeploy. This means continuous
+monitoring's "tracks score trend over time" promise only holds *between*
+redeploys, not indefinitely, on the free tier. For real long-term
+trending, point `DB_PATH` in `app/monitoring/store.py` at a persistent
+volume or external database.
 
 ## Known limitations
 
