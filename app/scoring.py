@@ -10,10 +10,13 @@ every point lost is traceable to a specific, citable control failure):
      findings like missing HTTPS or high-severity CVEs cost the most;
      informational gaps cost the least).
   3. Clamp the result to [0, 100].
-  4. Map the final score to a risk tier using the user-specified thresholds.
-     The 71-79 range is an intentional dead zone per the brief; scores
-     landing there are flagged for manual analyst review rather than
-     silently rounded into a neighboring tier.
+  4. Map the final score to a risk tier using a 5-tier scheme that mirrors
+     industry-standard CVSS v3.x severity banding (Critical 90-100%, High
+     70-89%, Medium 40-69%, Low 0.1-39%, None 0%), inverted because this
+     tool scores security POSTURE (higher = safer) rather than vulnerability
+     SEVERITY (higher = worse). The proportional band widths are preserved;
+     only the direction is flipped, and "None" becomes "Informational" at
+     a perfect 100.
 
 This keeps scoring fully explainable: "vendor X scored 62 because of
 findings A (-25), B (-15), C (-7) ..." rather than an unexplainable model
@@ -31,12 +34,11 @@ class RiskTier:
 
 
 TIERS = [
-    (0, 20, RiskTier("Critical Impact", "0-20")),
-    (21, 50, RiskTier("High Impact", "21-50")),
-    (51, 70, RiskTier("Medium Impact", "51-70")),
-    (71, 79, RiskTier("Unassigned — Manual Review Required", "71-79")),
-    (80, 95, RiskTier("Low Impact", "80-95")),
-    (96, 100, RiskTier("Informational", "96-100")),
+    (0, 9, RiskTier("Critical Impact", "0-9")),
+    (10, 29, RiskTier("High Impact", "10-29")),
+    (30, 59, RiskTier("Medium Impact", "30-59")),
+    (60, 99, RiskTier("Low Impact", "60-99")),
+    (100, 100, RiskTier("Informational", "100")),
 ]
 
 
@@ -53,3 +55,4 @@ def compute_score(findings: list) -> tuple[int, RiskTier]:
     score = max(0, min(100, 100 - total_deduction))
     tier = classify_tier(score)
     return score, tier
+

@@ -97,20 +97,24 @@ HTTPS enforcement costs 25 points (critical), a missing `Permissions-Policy`
 header costs 2 (informational). The full weight table lives in
 `app/compliance/engine.py`.
 
-### Risk tiers (as specified)
+### Risk tiers (5-tier scheme, mirrors industry-standard CVSS severity banding)
+
+This tool scores security **posture** (higher = safer), which is the inverse
+of CVSS, which scores vulnerability **severity** (higher = worse). The tier
+boundaries mirror CVSS v3.x's proportional band widths (Critical 90–100%,
+High 70–89%, Medium 40–69%, Low 0.1–39%, None 0%) but flipped in direction,
+so a perfect-posture vendor lands at 100 ("Informational") rather than 0.
 
 | Score | Tier |
 |---|---|
-| 0–20 | Critical Impact |
-| 21–50 | High Impact |
-| 51–70 | Medium Impact |
-| 71–79 | **Unassigned — Manual Review Required** |
-| 80–95 | Low Impact |
-| 96–100 | Informational |
+| 0–9 | Critical Impact |
+| 10–29 | High Impact |
+| 30–59 | Medium Impact |
+| 60–99 | Low Impact |
+| 100 | Informational |
 
-The 71–79 gap is intentional, not a bug — it's called out explicitly in
-both the report and the UI rather than silently rounded into a neighboring
-tier, exactly as flagged in the original spec.
+This is a 5-tier, gapless scheme — every score from 0–100 maps to exactly
+one tier, with no manual-review dead zone.
 
 ---
 

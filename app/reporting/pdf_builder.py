@@ -29,7 +29,6 @@ TIER_COLORS = {
     "Critical Impact": colors.HexColor("#B91C1C"),
     "High Impact": colors.HexColor("#EA580C"),
     "Medium Impact": colors.HexColor("#CA8A04"),
-    "Unassigned — Manual Review Required": colors.HexColor("#6B7280"),
     "Low Impact": colors.HexColor("#16A34A"),
     "Informational": colors.HexColor("#2563EB"),
 }
@@ -291,8 +290,8 @@ def build_pdf_report(
     ))
     story.append(Spacer(1, 10))
     story.append(Paragraph(
-        "Risk Tier Thresholds: Critical Impact (0-20) · High Impact (21-50) · Medium Impact "
-        "(51-70) · Unassigned/Manual Review (71-79) · Low Impact (80-95) · Informational (96-100).",
+        "Risk Tier Thresholds: Critical Impact (0-9) · High Impact (10-29) · Medium Impact "
+        "(30-59) · Low Impact (60-99) · Informational (100).",
         styles["Small"],
     ))
 
