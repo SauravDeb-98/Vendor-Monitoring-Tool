@@ -144,3 +144,23 @@ def get_usage_stats(hours: int = 24) -> dict:
         "total_vendors_assessed": total_vendors,
         "unique_sessions": unique_sessions,
     }
+
+
+def get_mean_time_to_detect(hours: int = 24) -> float | None:
+    """
+    Mean Time to Detect (MTTD) KPI: average duration_seconds across
+    completed scans in the window. This measures scan EXECUTION time
+    (how long detection took to run), not breach-to-discovery time —
+    this platform has no visibility into actual compromise timing, so a
+    true SOC-style MTTD cannot be computed; this is the honest, available
+    proxy. Returns None if there's no completed-scan data in the window.
+    """
+    cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - hours * 3600))
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT AVG(duration_seconds) as avg_duration FROM scan_audit_log "
+            "WHERE timestamp_utc >= ? AND status = 'complete' AND duration_seconds IS NOT NULL",
+            (cutoff,),
+        ).fetchone()
+        return row["avg_duration"] if row and row["avg_duration"] is not None else None

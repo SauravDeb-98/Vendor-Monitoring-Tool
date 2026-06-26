@@ -202,6 +202,61 @@
 
   .footer-note { font-size: 11.5px; color: var(--muted); line-height: 1.7; margin-top: 32px; text-align: center; }
 
+  /* KPI cards */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .kpi-card { background: var(--panel-raised); border: 1px solid var(--line); border-radius: 9px; padding: 16px; }
+  .kpi-value { font-size: 26px; font-weight: 700; font-family: var(--mono); margin-bottom: 4px; }
+  .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .kpi-card.accent .kpi-value { color: var(--accent); }
+  .kpi-card.warn .kpi-value { color: var(--warn); }
+  .kpi-card.danger .kpi-value { color: var(--danger); }
+
+  /* Registry matrix */
+  .registry-toggle { display: flex; gap: 8px; margin-bottom: 14px; }
+  .registry-toggle button {
+    background: var(--panel-raised); border: 1px solid var(--line); color: var(--muted);
+    padding: 7px 14px; border-radius: 7px; font-size: 12px; cursor: pointer;
+  }
+  .registry-toggle button.active { border-color: var(--accent); color: var(--accent); }
+  .registry-domain-group { margin-bottom: 16px; }
+  .registry-domain-title {
+    font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .registry-domain-title .count-badge { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+  .registry-row {
+    display: grid; grid-template-columns: 56px 1fr 90px 90px 110px; gap: 10px;
+    padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 11.5px; align-items: center;
+  }
+  .registry-row.header-row { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--accent-dim); }
+  .det-id { font-family: var(--mono); color: var(--muted); }
+  .status-pill { font-size: 9.5px; padding: 2px 8px; border-radius: 20px; font-weight: 700; text-align: center; }
+  .status-pill.ACTIVE { background: rgba(61,220,151,0.15); color: var(--accent); }
+  .status-pill.BYO_KEY { background: rgba(232,165,61,0.15); color: var(--warn); }
+  .status-pill.NOT_IMPLEMENTED { background: rgba(255,255,255,0.05); color: var(--muted); }
+  .priority-pill { font-size: 10px; font-weight: 600; }
+  .priority-pill.High { color: var(--danger); }
+  .priority-pill.Medium { color: var(--warn); }
+  .priority-pill.Low { color: var(--muted); }
+  .gap-reason {
+    display: none; font-size: 11px; color: var(--muted); padding: 6px 10px 10px 66px;
+    line-height: 1.5; border-bottom: 1px solid var(--line);
+  }
+  .gap-reason.open { display: block; }
+  .registry-row.clickable { cursor: pointer; }
+  .registry-row.clickable:hover { background: rgba(255,255,255,0.02); }
+
+  /* Clustering view */
+  .cluster-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .cluster-card { background: var(--panel-raised); border: 1px solid var(--line); border-radius: 9px; padding: 14px; }
+  .cluster-card .provider-name { font-weight: 700; font-size: 12.5px; margin-bottom: 8px; color: var(--info); }
+  .cluster-card.shared .provider-name { color: var(--warn); }
+  .cluster-card .vendor-chip-small {
+    display: inline-block; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 3px 10px; font-size: 11px; margin: 2px;
+  }
+  .cluster-concern-note { font-size: 10.5px; color: var(--warn); margin-top: 8px; }
+
   @media (max-width: 720px) {
     .monitor-config.visible { grid-template-columns: 1fr; }
     table, thead, tbody, tr, td { display: block; }
@@ -223,6 +278,36 @@
     Select vendors, choose which detector(s) to run, and optionally enable continuous monitoring
     for automated re-scans with score-drop alerts. No login required. Passive checks only.
   </p>
+
+  <!-- KPI cards -->
+  <div class="kpi-grid" id="kpi-grid">
+    <div class="kpi-card"><div class="kpi-value" id="kpi-total-vendors">—</div><div class="kpi-label">Monitored Vendors</div></div>
+    <div class="kpi-card accent"><div class="kpi-value" id="kpi-continuous">—</div><div class="kpi-label">Continuous Scans</div></div>
+    <div class="kpi-card"><div class="kpi-value" id="kpi-active-detectors">—</div><div class="kpi-label">Active Detectors</div></div>
+    <div class="kpi-card warn"><div class="kpi-value" id="kpi-high-priority">—</div><div class="kpi-label">High-Priority Slots</div></div>
+    <div class="kpi-card danger"><div class="kpi-value" id="kpi-alerts">—</div><div class="kpi-label">Recent Alerts</div></div>
+  </div>
+
+  <!-- Detector Registry Matrix -->
+  <div class="panel">
+    <p class="panel-title">📋 Full Detector Registry (35 slots across 10 domains)</p>
+    <div class="registry-toggle">
+      <button class="active" data-filter="all">All (35)</button>
+      <button data-filter="ACTIVE">Active</button>
+      <button data-filter="BYO_KEY">Needs API Key</button>
+      <button data-filter="NOT_IMPLEMENTED">Not Implemented</button>
+    </div>
+    <div id="registry-content">Loading registry…</div>
+  </div>
+
+  <!-- Concentration Clustering View -->
+  <div class="panel">
+    <p class="panel-title">🌐 Fourth-Party Concentration View — vendors sharing infrastructure</p>
+    <div id="cluster-content">
+      <p style="color:var(--muted);font-size:12px;">Run a scan with the Concentration Risk detector first to populate this view from your vendor inventory.</p>
+    </div>
+    <button class="export-btn" id="refresh-clusters-btn" style="margin-top:10px;">↻ Refresh Clustering View</button>
+  </div>
 
   <!-- Step 1: Vendor input -->
   <div class="panel">
@@ -357,6 +442,129 @@ async function loadDetectors() {
 }
 loadDetectors();
 
+// --- KPI cards ---
+async function loadKpis() {
+  try {
+    const resp = await fetch('/api/kpis');
+    const data = await resp.json();
+    document.getElementById('kpi-total-vendors').textContent = data.total_monitored_vendors;
+    document.getElementById('kpi-continuous').textContent = data.continuous_monitoring_count;
+    document.getElementById('kpi-active-detectors').textContent = data.detector_registry.active + ' / ' + data.detector_registry.total_detectors;
+    document.getElementById('kpi-high-priority').textContent = data.detector_registry.high_priority_count;
+    document.getElementById('kpi-alerts').textContent = data.recent_alert_count;
+  } catch (err) {
+    console.error('Failed to load KPIs', err);
+  }
+}
+loadKpis();
+
+// --- Full Detector Registry Matrix ---
+let registryData = null;
+let registryFilter = 'all';
+
+async function loadRegistry() {
+  try {
+    const resp = await fetch('/api/registry');
+    registryData = await resp.json();
+    renderRegistry();
+  } catch (err) {
+    document.getElementById('registry-content').innerHTML = '<div class="error-banner">Could not load detector registry.</div>';
+  }
+}
+
+function renderRegistry() {
+  if (!registryData) return;
+  const container = document.getElementById('registry-content');
+  container.innerHTML = '';
+
+  for (const [domain, detectors] of Object.entries(registryData.by_domain)) {
+    const filtered = registryFilter === 'all' ? detectors : detectors.filter(d => d.implementation_status === registryFilter);
+    if (filtered.length === 0) continue;
+
+    const group = document.createElement('div');
+    group.className = 'registry-domain-group';
+    group.innerHTML = `<div class="registry-domain-title">${domain} <span class="count-badge">(${filtered.length})</span></div>`;
+
+    const header = document.createElement('div');
+    header.className = 'registry-row header-row';
+    header.innerHTML = `<div>ID</div><div>Detector</div><div>Mode</div><div>Priority</div><div>Status</div>`;
+    group.appendChild(header);
+
+    filtered.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'registry-row' + (d.implementation_status === 'NOT_IMPLEMENTED' || d.implementation_status === 'BYO_KEY' ? ' clickable' : '');
+      row.innerHTML = `
+        <div class="det-id">${d.det_id}</div>
+        <div>${d.name}</div>
+        <div style="color:var(--muted);font-size:11px;">${d.monitoring_mode}</div>
+        <div class="priority-pill ${d.risk_priority}">${d.risk_priority}</div>
+        <div class="status-pill ${d.implementation_status}">${d.implementation_status.replace('_', ' ')}</div>
+      `;
+      group.appendChild(row);
+
+      if (d.gap_reason) {
+        const gapRow = document.createElement('div');
+        gapRow.className = 'gap-reason';
+        gapRow.innerHTML = `<b>${d.gap_category}:</b> ${d.gap_reason} <span style="color:var(--muted);">Reference sources: ${d.example_sources}</span>`;
+        group.appendChild(gapRow);
+        row.addEventListener('click', () => gapRow.classList.toggle('open'));
+      }
+    });
+
+    container.appendChild(group);
+  }
+}
+
+document.querySelectorAll('.registry-toggle button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.registry-toggle button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    registryFilter = btn.dataset.filter;
+    renderRegistry();
+  });
+});
+
+loadRegistry();
+
+// --- Concentration Clustering View ---
+async function loadClusters() {
+  const container = document.getElementById('cluster-content');
+  container.innerHTML = '<p style="color:var(--muted);font-size:12px;">Loading clusters…</p>';
+  try {
+    const resp = await fetch('/api/concentration-clusters');
+    const data = await resp.json();
+    const clusters = data.clusters || {};
+    const entries = Object.entries(clusters);
+
+    if (entries.length === 0) {
+      container.innerHTML = '<p style="color:var(--muted);font-size:12px;">No vendor data yet. Run a scan with vendors first.</p>';
+      return;
+    }
+
+    container.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'cluster-grid';
+    entries.forEach(([provider, vendors]) => {
+      const isShared = vendors.length > 1 && provider !== 'Unknown';
+      const card = document.createElement('div');
+      card.className = 'cluster-card' + (isShared ? ' shared' : '');
+      const chips = vendors.map(v => `<span class="vendor-chip-small">${v.name}</span>`).join('');
+      card.innerHTML = `
+        <div class="provider-name">${provider} (${vendors.length})</div>
+        <div>${chips}</div>
+        ${isShared ? '<div class="cluster-concern-note">⚠ Concentration risk: multiple vendors share this provider</div>' : ''}
+      `;
+      grid.appendChild(card);
+    });
+    container.appendChild(grid);
+  } catch (err) {
+    container.innerHTML = '<div class="error-banner">Could not load clustering view.</div>';
+  }
+}
+
+document.getElementById('refresh-clusters-btn').addEventListener('click', loadClusters);
+loadClusters();
+
 document.querySelectorAll('.mode-option').forEach(opt => {
   opt.addEventListener('click', () => {
     document.querySelectorAll('.mode-option').forEach(o => o.classList.remove('selected'));
@@ -454,6 +662,8 @@ async function pollDetectJob(requestId) {
     if (job.status === 'complete') {
       runStatus.textContent = '';
       renderResults(job);
+      loadKpis();
+      loadClusters();
       return;
     }
   }

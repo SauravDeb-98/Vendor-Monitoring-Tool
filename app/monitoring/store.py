@@ -262,3 +262,34 @@ def list_recent_alerts(limit: int = 50) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM alerts ORDER BY triggered_at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_vendor_security_drift_index() -> float | None:
+    """
+    Vendor Security Drift Index KPI: average point-change in
+    vulnerability-detector scores between the two most recent recorded
+    scans, across all continuously-monitored vendors. A real, computed
+    measure of how much vendor posture is moving scan-to-scan (negative
+    = vendors trending worse on average, positive = trending better) —
+    not a placeholder metric. Returns None if there isn't enough score
+    history yet (need at least 2 recorded scans for at least 1 vendor).
+    """
+    with _connect() as conn:
+        vendor_ids = [row["vendor_id"] for row in conn.execute(
+            "SELECT DISTINCT vendor_id FROM monitoring_configs WHERE mode = 'continuous'"
+        ).fetchall()]
+
+    if not vendor_ids:
+        return None
+
+    deltas = []
+    for vendor_id in vendor_ids:
+        history = get_score_history(vendor_id, detector_type="vulnerability", limit=2)
+        if len(history) >= 2:
+            latest, previous = history[0], history[1]
+            if latest["score"] is not None and previous["score"] is not None:
+                deltas.append(latest["score"] - previous["score"])
+
+    if not deltas:
+        return None
+    return sum(deltas) / len(deltas)

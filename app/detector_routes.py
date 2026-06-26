@@ -34,10 +34,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.detectors.registry import DetectorType, ALL_DETECTOR_TYPES, DETECTOR_LABELS, DETECTOR_DESCRIPTIONS
 from app.detectors.orchestrator import run_detectors_for_vendors
+from app.detectors.full_registry import DETECTOR_REGISTRY, get_registry_summary, get_by_domain
 from app.domain_discovery import discover_domain
 from app.monitoring import store as monitoring_store
 from app.ingestion import _clean_url, _extract_domain
 from app.detector_export import build_export_workbook
+from app.executive_report import build_executive_pdf
+from app import audit_log
 
 router = APIRouter()
 
@@ -285,6 +288,104 @@ async def list_alerts():
     return JSONResponse({"alerts": monitoring_store.list_recent_alerts()})
 
 
+@router.get("/api/registry")
+async def get_full_registry():
+    """
+    Returns the complete 35-detector registry, including the ~23 entries
+    that are NOT_IMPLEMENTED with their specific gap reasons — this is
+    deliberately not filtered down to only the working detectors, so the
+    dashboard can show real intended coverage alongside what's actually live.
+    """
+    return JSONResponse({
+        "summary": get_registry_summary(),
+        "by_domain": {
+            domain: [
+                {
+                    "det_id": d.det_id, "domain": d.domain, "name": d.name, "mechanism": d.mechanism,
+                    "monitoring_mode": d.monitoring_mode, "risk_priority": d.risk_priority,
+                    "implementation_status": d.implementation_status, "example_sources": d.example_sources,
+                    "gap_category": d.gap_category, "gap_reason": d.gap_reason,
+                    "internal_detector_key": d.internal_detector_key,
+                }
+                for d in specs
+            ]
+            for domain, specs in get_by_domain().items()
+        },
+    })
+
+
+@router.get("/api/kpis")
+async def get_kpi_metrics():
+    """
+    Quick-glance KPI metrics for the dashboard's middle section: total
+    monitored vendors, critical/high priority detector coverage, and
+    continuous-scan health (how many continuously-monitored vendors had
+    a successful run recently vs. are stale/erroring).
+    """
+    monitoring_store.init_store()
+    vendors = monitoring_store.list_vendors()
+    continuous_configs = []
+    for v in vendors:
+        config = monitoring_store.get_monitoring_config(v["vendor_id"])
+        if config and config["mode"] == "continuous":
+            continuous_configs.append(config)
+
+    registry_summary = get_registry_summary()
+    recent_alerts = monitoring_store.list_recent_alerts(limit=10)
+
+    return JSONResponse({
+        "total_monitored_vendors": len(vendors),
+        "continuous_monitoring_count": len(continuous_configs),
+        "ad_hoc_only_count": len(vendors) - len(continuous_configs),
+        "detector_registry": registry_summary,
+        "recent_alert_count": len(recent_alerts),
+    })
+
+
+@router.get("/api/concentration-clusters")
+async def get_concentration_clusters():
+    """
+    Runs the concentration-risk detector across the full vendor inventory
+    and returns vendors clustered by shared hosting/CDN provider — the
+    'which vendors share fourth-party infrastructure' view for the
+    dashboard's entity-relationship / clustering toggle.
+    """
+    monitoring_store.init_store()
+    vendors = monitoring_store.list_vendors()
+    if not vendors:
+        return JSONResponse({"clusters": {}})
+
+    simple_vendors = [SimpleVendor(v["name"], v["domain"]) for v in vendors]
+    results_by_domain = await run_detectors_for_vendors(simple_vendors, [DetectorType.CONCENTRATION_RISK])
+
+    from app.detectors.concentration_risk import ConcentrationResult
+    concentration_results = []
+    for v in simple_vendors:
+        dr_list = results_by_domain.get(v.domain, [])
+        if dr_list:
+            dr = dr_list[0]
+            detail = dr.detail_items[0] if dr.detail_items else {}
+            concentration_results.append(ConcentrationResult(
+                domain=v.domain,
+                resolved_ips=detail.get("resolved_ips", []),
+                asn=detail.get("asn"),
+                asn_organization=detail.get("asn_organization"),
+                detected_provider=detail.get("detected_provider"),
+                evidence=detail.get("evidence"),
+            ))
+
+    from app.detectors.concentration_risk import cluster_vendors_by_provider
+    clusters = cluster_vendors_by_provider(concentration_results)
+
+    # Map back domain -> vendor name for display
+    domain_to_name = {v.domain: v.name for v in simple_vendors}
+    clusters_with_names = {
+        provider: [{"domain": d, "name": domain_to_name.get(d, d)} for d in domains]
+        for provider, domains in clusters.items()
+    }
+    return JSONResponse({"clusters": clusters_with_names})
+
+
 @router.get("/api/detect/{request_id}/export")
 async def export_detect_job_to_excel(request_id: str):
     job = _detect_jobs.get(request_id)
@@ -309,4 +410,43 @@ async def export_detect_job_to_excel(request_id: str):
         iter([xlsx_bytes]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="vendor_threat_detection_export.xlsx"'},
+    )
+
+
+@router.get("/api/detect/{request_id}/export-executive-pdf")
+async def export_detect_job_to_executive_pdf(request_id: str):
+    """
+    Generates the boardroom-ready executive PDF (Slate/Deep-Blue theme,
+    KPIs including MTTD and Security Drift Index, full 35-detector
+    registry matrix, and operational runbook) for a completed detect job.
+    """
+    job = _detect_jobs.get(request_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Detection job not found.")
+    if job.get("status") != "complete" or not job.get("results"):
+        raise HTTPException(status_code=409, detail=f"Job not ready for export (status: {job.get('status')}).")
+
+    monitoring_store.init_store()
+    audit_log.init_audit_log()
+
+    mttd = audit_log.get_mean_time_to_detect(hours=24)
+    drift = monitoring_store.get_vendor_security_drift_index()
+
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        output_path = os.path.join(tmp_dir, "executive_report.pdf")
+        build_executive_pdf(
+            output_path=output_path,
+            vendor_results=job["results"],
+            registry_by_domain=get_by_domain(),
+            mttd_seconds=mttd,
+            drift_index=drift,
+        )
+        with open(output_path, "rb") as f:
+            pdf_bytes = f.read()
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="vendor_threat_executive_report.pdf"'},
     )

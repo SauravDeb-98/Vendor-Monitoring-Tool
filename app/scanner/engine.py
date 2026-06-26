@@ -50,6 +50,7 @@ class ScanResult:
     status_code: int | None = None
     headers_present: dict[str, bool] = field(default_factory=dict)
     missing_headers: list[str] = field(default_factory=list)
+    raw_headers: dict[str, str] = field(default_factory=dict)
     tls_version: str | None = None
     tls_cert_valid: bool | None = None
     tls_cert_expires_days: int | None = None
@@ -76,6 +77,7 @@ async def _check_http(client: httpx.AsyncClient, domain: str, result: ScanResult
             if scheme == "https":
                 result.https_enforced = True
             headers_lower = {k.lower(): v for k, v in resp.headers.items()}
+            result.raw_headers = headers_lower
             for h in SECURITY_HEADERS:
                 present = h in headers_lower
                 result.headers_present[h] = present

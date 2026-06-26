@@ -54,23 +54,36 @@ def _build_styles():
 
 
 def _score_distribution_chart(vendor_results: list[dict]) -> Drawing:
-    drawing = Drawing(270, 200)
+    drawing = Drawing(270, 220)
     chart = VerticalBarChart()
     chart.x = 45
-    chart.y = 40
+    chart.y = 55
     chart.height = 130
     chart.width = 210
-    names = [v["name"][:12] for v in vendor_results]
+    # Truncate to 9 chars + ellipsis (was 12 chars with no ellipsis) — at
+    # this chart width, labels longer than ~9 chars collide with their
+    # neighbors when angled, since bar spacing is fixed by chart.width
+    # divided by vendor count and does not grow with label length.
+    names = [(v["name"][:9] + "…") if len(v["name"]) > 9 else v["name"] for v in vendor_results]
     scores = [v["score"] for v in vendor_results]
     chart.data = [scores]
     chart.categoryAxis.categoryNames = names
-    chart.categoryAxis.labels.angle = 30
-    chart.categoryAxis.labels.dy = -10
+    # Steeper angle (45 vs 30) trades horizontal spread for vertical, which
+    # is the actual constraint here — horizontal space per label shrinks as
+    # vendor count grows, but vertical space below the axis does not.
+    chart.categoryAxis.labels.angle = 45
+    chart.categoryAxis.labels.dy = -8
+    chart.categoryAxis.labels.dx = -4
     chart.categoryAxis.labels.fontSize = 7
+    chart.categoryAxis.labels.boxAnchor = "ne"
     chart.valueAxis.valueMin = 0
     chart.valueAxis.valueMax = 100
     chart.valueAxis.valueStep = 20
     chart.bars[0].fillColor = colors.HexColor("#2563EB")
+    # Add visible gaps between bars so adjacent angled labels don't read as
+    # touching even when names are similar lengths.
+    chart.barSpacing = 4
+    chart.groupSpacing = 8
     for i, v in enumerate(vendor_results):
         tier_color = TIER_COLORS.get(v["tier"], colors.grey)
         chart.bars[(0, i)].fillColor = tier_color
@@ -226,26 +239,40 @@ def build_pdf_report(
     story.append(chart_table)
     story.append(Spacer(1, 10))
 
-    # Summary table of all vendors
-    summary_header = ["Vendor", "Website", "Score", "Risk Tier"]
+    # Summary table of all vendors. Cell content MUST be wrapped in Paragraph
+    # objects, not raw strings — ReportLab only wraps Paragraph/Flowable
+    # content to the column width; a plain string is measured at its natural
+    # width and can visually overflow into the next cell (this was the cause
+    # of vendor-name text running into the website column with no space).
+    summary_cell_style = ParagraphStyle("SummaryCell", parent=styles["Normal"], fontSize=9, leading=11)
+    summary_header_style = ParagraphStyle("SummaryHeader", parent=styles["Normal"], fontSize=9, leading=11, textColor=colors.white, fontName="Helvetica-Bold")
+
+    summary_header = [Paragraph(h, summary_header_style) for h in ["Vendor", "Website", "Score", "Risk Tier"]]
     summary_rows = [summary_header]
     for v in vendor_reports:
-        summary_rows.append([v["name"], v["website"], f"{v['score']}/100", v["tier"]])
-    summary_table = Table(summary_rows, colWidths=[120, 170, 50, 150], repeatRows=1)
+        tier_color = TIER_COLORS.get(v["tier"], colors.black)
+        tier_style = ParagraphStyle(
+            f"TierCell_{v['tier'].replace(' ', '_')}", parent=summary_cell_style,
+            textColor=tier_color, fontName="Helvetica-Bold",
+        )
+        summary_rows.append([
+            Paragraph(v["name"], summary_cell_style),
+            Paragraph(v["website"], summary_cell_style),
+            Paragraph(f"{v['score']}/100", summary_cell_style),
+            Paragraph(v["tier"], tier_style),
+        ])
+    # Widened vendor/website columns (was 120/170) since real vendor names
+    # and full https:// URLs routinely exceed those widths; total still
+    # fits LETTER page width within the 0.6in margins set on the document.
+    summary_table = Table(summary_rows, colWidths=[145, 195, 55, 95], repeatRows=1)
     style_cmds = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
         ("TOPPADDING", (0, 0), (-1, -1), 6),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
     ]
-    for i, v in enumerate(vendor_reports, start=1):
-        tier_color = TIER_COLORS.get(v["tier"], colors.black)
-        style_cmds.append(("TEXTCOLOR", (3, i), (3, i), tier_color))
-        style_cmds.append(("FONTNAME", (3, i), (3, i), "Helvetica-Bold"))
     summary_table.setStyle(TableStyle(style_cmds))
     story.append(summary_table)
     story.append(PageBreak())

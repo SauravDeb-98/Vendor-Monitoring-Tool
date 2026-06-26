@@ -29,12 +29,22 @@ class DetectorType(str, Enum):
     EXPLOITATION = "exploitation"
     VULNERABILITY = "vulnerability"
     PHISHING = "phishing"
+    SUBDOMAIN_TAKEOVER = "subdomain_takeover"
+    DNS_INTEGRITY = "dns_integrity"
+    WAF_ABSENCE = "waf_absence"
+    CORS_CSP = "cors_csp"
+    CONCENTRATION_RISK = "concentration_risk"
 
 
 DETECTOR_LABELS = {
     DetectorType.EXPLOITATION: "Active Exploitation & Advisory Detector",
     DetectorType.VULNERABILITY: "Vulnerability & Exploit Scanner",
     DetectorType.PHISHING: "Phishing & Brand Impersonation Detector",
+    DetectorType.SUBDOMAIN_TAKEOVER: "Subdomain Takeover Monitor",
+    DetectorType.DNS_INTEGRITY: "DNS Hijacking & Shadow DNS Detector",
+    DetectorType.WAF_ABSENCE: "Web Application Firewall (WAF) Absence Detector",
+    DetectorType.CORS_CSP: "CORS & Content Security Policy (CSP) Auditor",
+    DetectorType.CONCENTRATION_RISK: "Fourth-Party Concentration Infrastructure Mapping",
 }
 
 DETECTOR_DESCRIPTIONS = {
@@ -50,9 +60,33 @@ DETECTOR_DESCRIPTIONS = {
         "Generates plausible lookalike/typosquat domains and checks public certificate "
         "transparency logs for evidence of live infrastructure impersonating the vendor's brand."
     ),
+    DetectorType.SUBDOMAIN_TAKEOVER: (
+        "Checks CT-log-discovered subdomains for dangling CNAME records pointing at "
+        "decommissioned third-party cloud services — a classic subdomain-takeover signal."
+    ),
+    DetectorType.DNS_INTEGRITY: (
+        "Snapshots authoritative nameservers (for change detection under continuous "
+        "monitoring) and flags unusually large or random-looking subdomain volume."
+    ),
+    DetectorType.WAF_ABSENCE: (
+        "Checks response headers for known WAF/CDN provider signatures to estimate "
+        "whether a web application firewall is likely in front of the vendor's site."
+    ),
+    DetectorType.CORS_CSP: (
+        "Audits Content-Security-Policy strength and CORS configuration for wildcard "
+        "or overly permissive cross-origin policies."
+    ),
+    DetectorType.CONCENTRATION_RISK: (
+        "Identifies the vendor's underlying hosting/CDN provider via real ASN lookup, "
+        "to surface when multiple vendors share the same fourth-party infrastructure."
+    ),
 }
 
-ALL_DETECTOR_TYPES = [DetectorType.EXPLOITATION, DetectorType.VULNERABILITY, DetectorType.PHISHING]
+ALL_DETECTOR_TYPES = [
+    DetectorType.EXPLOITATION, DetectorType.VULNERABILITY, DetectorType.PHISHING,
+    DetectorType.SUBDOMAIN_TAKEOVER, DetectorType.DNS_INTEGRITY, DetectorType.WAF_ABSENCE,
+    DetectorType.CORS_CSP, DetectorType.CONCENTRATION_RISK,
+]
 
 
 @dataclass

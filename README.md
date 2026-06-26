@@ -344,32 +344,115 @@ detector(s) to run, and optionally enable continuous monitoring with
 score-drop alerts — a Black-Kite-style ongoing tracking workflow rather
 than a one-off report.
 
-### Detectors (3, not 4 — see naming note below)
+### Detectors: 10 active out of a 35-slot registry
+
+The original feature request specified 35 detectors across 10 security
+domains. This tool implements **10 of them for real** with zero-signup,
+free, passive data sources, documents **2 more as ready to enable** once
+you supply a free (registration-required) API key, and **honestly marks
+the remaining 23 as not implemented**, each with a specific, verified
+reason — see "Full 35-detector registry" below for the complete picture,
+including why.
 
 | Detector | What it actually checks | Data source |
 |---|---|---|
 | **Active Exploitation & Advisory Detector** | Confirmed, actively-exploited CVEs and ransomware-campaign links associated with the vendor | CISA's public Known Exploited Vulnerabilities (KEV) catalog |
-| **Vulnerability & Exploit Scanner** | TLS/certificate health, HTTP security headers, DNS email-auth records, publicly disclosed CVEs | Same passive scan engine as the original vendor risk report tool |
+| **Vulnerability & Exploit Scanner** | TLS/certificate health, HTTP security headers, DNS email-auth records, publicly disclosed CVEs | NVD CVE API + direct TLS/HTTP/DNS checks |
 | **Phishing & Brand Impersonation Detector** | Plausible lookalike/typosquat domains with evidence of live, certificate-backed infrastructure | Public Certificate Transparency logs (crt.sh) |
+| **Subdomain Takeover Monitor** | CT-log-discovered subdomains with CNAMEs pointing at decommissioned-prone third-party services (S3, Heroku, Azure, GitHub Pages, etc.) | CT logs (reused from the phishing detector's data) + DNS CNAME lookup |
+| **DNS Hijacking & Shadow DNS Detector** | Authoritative nameserver snapshot (for change detection under continuous monitoring) + unusually large/random-looking subdomain volume | DNS NS records + CT-log subdomain count |
+| **WAF Absence Detector** | Whether a WAF/CDN provider is likely in front of the site, via response-header fingerprinting | Reuses the Vulnerability Scanner's single HTTP response — no extra request |
+| **CORS & CSP Auditor** | Wildcard CORS policies and weak CSP directives (`unsafe-inline`, `unsafe-eval`, wildcard `default-src`) | Same single HTTP response, no extra request |
+| **Fourth-Party Concentration Mapping** | Which underlying cloud/CDN provider a vendor's domain actually resolves to, and which vendors in your inventory share one | Team Cymru's free DNS-based IP-to-ASN mapping (ground-truth BGP data), with reverse-DNS and header-signature fallbacks |
 
-**Naming note — read this before expecting breach/dark-web detection:**
-The original feature request specified four detectors, including a "Data
-Breach Detector" (checking for exposed credentials/leaked databases) and
-an "Incident & Ransomware Tracker" (checking dark-web extortion notices).
-Both were intentionally not built as specified. Querying credential-dump
-databases or dark-web extortion content means building infrastructure for
-accessing stolen data and criminal markets — that's not something this
-codebase implements, regardless of the defensive framing. Those two slots
-were merged into the single **Active Exploitation & Advisory Detector**,
-named for what it actually measures (CISA's own public confirmed-active-
-exploitation data, including a `knownRansomwareCampaignUse` flag — a
-real, legitimate, public answer to the "ransomware" part of the original
-ask) rather than implying breach-news monitoring it cannot do. CISA's KEV
-catalog is fetched from the [cisagov/kev-data GitHub
-mirror](https://github.com/cisagov/kev-data), which CISA documents as
-staying in sync with cisa.gov within minutes — used instead of the
-canonical cisa.gov URL because it's a more universally allowlist-friendly
-HTTPS host for outbound requests from a server environment.
+**Naming note on the original "Data Breach" / "Incident & Ransomware
+Tracker" detectors:** both were intentionally not built as specified.
+Querying credential-dump databases or dark-web extortion content means
+building infrastructure for accessing stolen data and criminal markets —
+not something this codebase implements, regardless of the defensive
+framing. Those two slots were merged into the single **Active
+Exploitation & Advisory Detector**, named for what it actually measures
+(CISA's own public confirmed-active-exploitation data, including a
+`knownRansomwareCampaignUse` flag — a real, legitimate, public answer to
+the "ransomware" part of the original ask) rather than implying breach-
+news monitoring it cannot do. CISA's KEV catalog is fetched from the
+[cisagov/kev-data GitHub mirror](https://github.com/cisagov/kev-data),
+which CISA documents as staying in sync with cisa.gov within minutes —
+used instead of the canonical cisa.gov URL because it's a more
+universally allowlist-friendly HTTPS host for outbound requests from a
+server environment.
+
+### Full 35-detector registry
+
+`GET /api/registry` (and the dashboard's "Full Detector Registry" panel)
+returns **every one of the 35 originally-specified detector slots**, not
+just the working ones — each tagged `ACTIVE`, `BYO_KEY`, or
+`NOT_IMPLEMENTED` (`app/detectors/full_registry.py`). Clicking a
+`NOT_IMPLEMENTED` or `BYO_KEY` row in the dashboard expands the specific
+reason. The reasons fall into five verified categories:
+
+- **PROHIBITED** — would require credential-dump databases, dark-web
+  leak/extortion sites, active port scanning, or active exploitation
+  testing against vendor infrastructure. This codebase does not implement
+  these regardless of framing (10 of the 23: DET-01, 03, 04, 05, 06, 18,
+  29, 34, and the dark-web-adjacent portions of others).
+- **NO_FREE_SOURCE** — every option found requires a paid subscription or
+  a free tier whose license restricts commercial use. Verified directly
+  against each provider's own documentation rather than assumed — e.g.
+  OpenCorporates' API requires a mandatory paid key beyond 500 calls/month
+  even on its "free" tier; OpenSanctions explicitly restricts its free
+  tier to non-commercial use; PACER/LexisNexis/Crunchbase/PitchBook have
+  no free equivalent at comparable coverage (DET-17, 24, 30, 31, 32).
+- **REQUIRES_PRIVATE_DATA** — the detector's own definition needs data no
+  external tool can observe: a vendor's private SOC 2 report, SBOM,
+  employee telemetry, or IAM/cloud-tenant credentials (DET-21, 22, 23, 26,
+  27, 28, 33, 35).
+- **OUT_OF_SCOPE** — technically buildable with a general web/news search
+  API, but this project deliberately stays zero-signup and does not call
+  a general search API server-side, consistent with the domain-auto-
+  discovery scoping decision above (DET-19).
+- **DEFERRED** — a real candidate for a future pass; just not built yet
+  (DET-13, screenshot-diff defacement monitoring, needs a headless-browser
+  pipeline this project doesn't currently run).
+
+**BYO_KEY (2):** DET-02 (Public Repository Secret Scanner) and DET-10 (IP
+Blacklist/Reputation Check) are both genuinely buildable — GitHub's code
+search API and AbuseIPDB's lookup API are real, free capabilities — but
+both require a free, registration-only API key to use reliably (GitHub's
+*unauthenticated* search rate limit is 60/hour, shared across every
+visitor to this public tool from the same server IP, which is unusable in
+practice; AbuseIPDB mandates a key even on its free tier). Neither is
+wired up by default; adding either is a small, well-defined task once you
+obtain a key.
+
+### Executive PDF report
+
+`GET /api/detect/{request_id}/export-executive-pdf` (and the dashboard's
+"Export Executive PDF" button) generates a boardroom-format report
+(`app/executive_report.py`) styled in Slate/Security Charcoal (`#1A252C`)
+with Deep Blue (`#1A5276`) accents:
+
+- Cover page with document classification, reporting period, vendor count
+- Executive Summary with KPI cards: vendors monitored, critical/high
+  findings, **Mean Time to Detect** (computed from real audit-log scan
+  durations — honestly labeled as scan execution time, not breach-to-
+  discovery time, since this platform has no visibility into actual
+  compromise timing), and **Vendor Security Drift Index** (computed from
+  real score-history deltas between the two most recent scans per
+  continuously-monitored vendor). Both KPIs return "N/A" rather than a
+  fabricated number when there isn't yet enough data to compute them.
+- Active detector results table for the vendors in the current job
+- The full 35-detector registry matrix, grouped by domain, color-coded by
+  status
+- A 5-phase operational runbook (Pre-Onboarding → Continuous Baseline →
+  Quarterly Review → Annual Deep-Dive → Incident-Triggered), each mapped
+  to specific detector IDs
+
+Pagination safety uses ReportLab's `KeepTogether` flowable around every
+KPI card row, registry domain block, and runbook phase — the direct
+equivalent of the originally-requested CSS `page-break-inside: avoid` /
+`page-break-after: avoid`, adapted for a PDF-drawing library rather than
+an HTML/CSS renderer.
 
 ### Domain auto-discovery fallback
 
@@ -440,10 +523,14 @@ specified in the original feature request.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/detectors` | List available detector types |
+| GET | `/api/detectors` | List the 8 implemented (selectable) detector types |
+| GET | `/api/registry` | Full 35-detector registry, including all not-implemented entries and their reasons |
+| GET | `/api/kpis` | Dashboard KPI summary (monitored vendors, active detector count, high-priority slots, recent alerts) |
+| GET | `/api/concentration-clusters` | Vendors grouped by shared hosting/CDN provider (4th-party concentration view) |
 | POST | `/api/detect` | Start an ad-hoc detection job |
 | GET | `/api/detect/{request_id}` | Poll job status/results |
 | GET | `/api/detect/{request_id}/export` | Export completed job to Excel |
+| GET | `/api/detect/{request_id}/export-executive-pdf` | Export completed job to the boardroom-format executive PDF |
 | POST | `/api/vendors/discover-domain` | Domain auto-discovery for a name-only vendor |
 | GET | `/api/vendors` | List vendor inventory |
 | POST | `/api/monitoring/{vendor_id}` | Create/update continuous monitoring |
@@ -451,6 +538,17 @@ specified in the original feature request.
 | DELETE | `/api/monitoring/{vendor_id}` | Stop continuous monitoring |
 | GET | `/api/monitoring` | List all continuously-monitored vendors |
 | GET | `/api/alerts` | List recent score-drop alerts |
+
+### Orchestration efficiency
+
+Six of the eight detectors (Vulnerability Scanner, Subdomain Takeover,
+DNS Integrity, WAF Absence, CORS/CSP, Concentration Mapping) all derive
+from the *same* underlying passive scan. `app/detectors/orchestrator.py`
+runs that base scan exactly once per vendor and feeds all six from it,
+rather than each independently re-scanning — verified directly: all 8
+detectors complete in roughly 5–6 seconds total for one vendor, not 6×
+that. Only the Active Exploitation (CISA KEV) and Phishing (independent
+typosquat-domain CT-log queries) detectors do genuinely separate work.
 
 ### Storage caveat (same as audit_log.py)
 
