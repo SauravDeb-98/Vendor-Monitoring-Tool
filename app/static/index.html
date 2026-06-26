@@ -79,7 +79,11 @@
   <div class="card" id="upload-card">
     <h2>1. Upload Vendor List</h2>
     <label for="file-input">Excel file (.xlsx)</label>
-    <input type="file" id="file-input" accept=".xlsx,.xls">
+    <div style="display:flex; gap:10px; align-items:center;">
+      <button type="button" id="choose-file-btn" style="width:auto; padding:10px 18px; flex-shrink:0;">Choose File</button>
+      <span id="chosen-filename" style="color:var(--muted); font-size:13px;">No file selected</span>
+    </div>
+    <input type="file" id="file-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; opacity:0; overflow:hidden;">
     <div class="hint">Only the "Vendor Name" and "Vendor Website Link" columns are read; everything else is ignored.</div>
 
     <label for="api-key-input">Claude API key (optional)</label>
@@ -120,6 +124,18 @@ const tierColors = {
 const scanBtn = document.getElementById('scan-btn');
 const fileInput = document.getElementById('file-input');
 const apiKeyInput = document.getElementById('api-key-input');
+const chooseFileBtn = document.getElementById('choose-file-btn');
+const chosenFilename = document.getElementById('chosen-filename');
+
+chooseFileBtn.addEventListener('click', () => {
+  fileInput.click();
+});
+
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files[0];
+  chosenFilename.textContent = file ? file.name : 'No file selected';
+  chosenFilename.style.color = file ? 'var(--text)' : 'var(--muted)';
+});
 const progressArea = document.getElementById('progress-area');
 const errorArea = document.getElementById('error-area');
 const resultCard = document.getElementById('result-card');

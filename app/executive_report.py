@@ -98,6 +98,14 @@ def _build_styles():
     styles.add(ParagraphStyle("CellTextWhite", fontSize=8, leading=10.5, fontName="Helvetica-Bold", textColor=WHITE))
     styles.add(ParagraphStyle("KpiValue", fontSize=20, leading=24, fontName="Helvetica-Bold", alignment=TA_CENTER))
     styles.add(ParagraphStyle("KpiLabel", fontSize=8, leading=11, alignment=TA_CENTER, textColor=MUTED))
+    styles.add(ParagraphStyle("VendorName", fontSize=13, leading=17, fontName="Helvetica-Bold",
+                                textColor=CHARCOAL, spaceBefore=14, spaceAfter=2))
+    styles.add(ParagraphStyle("DetectorHeader", fontSize=10, leading=13, fontName="Helvetica-Bold", textColor=CHARCOAL))
+    styles.add(ParagraphStyle("DetectorHeaderStatus", fontSize=9, leading=13, fontName="Helvetica-Bold", alignment=TA_LEFT))
+    styles.add(ParagraphStyle("FindingLine", fontSize=9, leading=13, fontName="Helvetica",
+                                textColor=TEXT_DARK, spaceBefore=3, leftIndent=10))
+    styles.add(ParagraphStyle("FindingCitation", fontSize=7.5, leading=10, fontName="Helvetica-Oblique",
+                                textColor=MUTED, spaceBefore=1, spaceAfter=4, leftIndent=10))
     return styles
 
 
@@ -232,6 +240,166 @@ def _detector_summary_table(styles, vendor_results: list[dict]) -> Table:
     return t
 
 
+SEVERITY_COLORS_EXEC = {
+    "CRITICAL": colors.HexColor("#A93226"), "HIGH": colors.HexColor("#C0392B"),
+    "MEDIUM": colors.HexColor("#B9770E"), "LOW": colors.HexColor("#5D6D7E"),
+    "INFO": colors.HexColor("#2E86C1"), "INFORMATIONAL": colors.HexColor("#2E86C1"),
+}
+
+
+def _finding_detail_rows(detector_key: str, detail_items: list[dict], styles) -> list:
+    """
+    Renders the SPECIFIC findings inside a detector's detail_items as a
+    compact, readable list — the actual substance a CISO/CTO needs to act
+    on, rather than just a one-line summary. Shape varies by detector, so
+    this dispatches on which keys are present in the first item.
+    """
+    if not detail_items:
+        return []
+    sample = detail_items[0]
+    lines = []
+
+    if "cve_id" in sample:  # exploitation detector
+        for item in detail_items[:8]:
+            sev = (item.get("severity") or "UNKNOWN") if not item.get("known_ransomware_use") else "CRITICAL"
+            sev_color = SEVERITY_COLORS_EXEC.get(str(sev).upper(), MUTED)
+            ransomware_tag = " — RANSOMWARE-LINKED" if item.get("known_ransomware_use") else ""
+            lines.append(Paragraph(
+                f'<font color="{sev_color.hexval()}"><b>[{item.get("cve_id","")}]</b></font> '
+                f'{item.get("vulnerability_name","")}{ransomware_tag} '
+                f'<font color="{MUTED.hexval()}">(added {item.get("date_added","")})</font>',
+                styles["FindingLine"],
+            ))
+    elif "finding" in sample and "nist" in sample:  # vulnerability detector
+        for item in detail_items[:10]:
+            sev = str(item.get("severity", "")).upper()
+            sev_color = SEVERITY_COLORS_EXEC.get(sev, MUTED)
+            citations = []
+            if item.get("nist"): citations.append("NIST: " + ", ".join(item["nist"]))
+            if item.get("iso27001"): citations.append("ISO 27001: " + ", ".join(item["iso27001"]))
+            if item.get("dora"): citations.append("DORA: " + ", ".join(item["dora"]))
+            if item.get("gdpr"): citations.append("GDPR: " + ", ".join(item["gdpr"]))
+            citation_text = " | ".join(citations)
+            lines.append(Paragraph(
+                f'<font color="{sev_color.hexval()}"><b>[{sev}]</b></font> {item.get("finding","")}',
+                styles["FindingLine"],
+            ))
+            if citation_text:
+                lines.append(Paragraph(citation_text, styles["FindingCitation"]))
+    elif "finding" in sample:  # cors_csp detector
+        for item in detail_items[:8]:
+            sev = str(item.get("severity", "")).upper()
+            sev_color = SEVERITY_COLORS_EXEC.get(sev, MUTED)
+            lines.append(Paragraph(
+                f'<font color="{sev_color.hexval()}"><b>[{sev}]</b></font> {item.get("finding","")}',
+                styles["FindingLine"],
+            ))
+    elif "candidate_domain" in sample:  # phishing detector
+        for item in detail_items[:8]:
+            live_tag = "LIVE" if item.get("reachable") else "cert only"
+            redirect_tag = " (redirects to real domain)" if item.get("redirects_to_real_domain") else ""
+            lines.append(Paragraph(
+                f'<b>{item.get("candidate_domain","")}</b> — {item.get("pattern_type","")}, {live_tag}{redirect_tag}',
+                styles["FindingLine"],
+            ))
+    elif "subdomain" in sample and "cname_target" in sample:  # subdomain takeover
+        for item in detail_items[:8]:
+            lines.append(Paragraph(
+                f'<b>{item.get("subdomain","")}</b> &#8594; {item.get("cname_target","")} '
+                f'<font color="{MUTED.hexval()}">({item.get("matched_service","")})</font>',
+                styles["FindingLine"],
+            ))
+    elif "nameservers" in sample:  # dns_integrity
+        item = sample
+        ns_list = ", ".join(item.get("nameservers", [])[:4])
+        lines.append(Paragraph(f"Nameservers on record: {ns_list}", styles["FindingLine"]))
+        if item.get("nameserver_change_detected"):
+            lines.append(Paragraph(
+                f'<font color="{SEVERITY_COLORS_EXEC["HIGH"].hexval()}"><b>Nameserver change detected since last scan.</b></font>',
+                styles["FindingLine"],
+            ))
+        if item.get("random_looking_count"):
+            lines.append(Paragraph(
+                f'{item["random_looking_count"]} of {item.get("subdomain_count", 0)} subdomains have random-looking names.',
+                styles["FindingLine"],
+            ))
+    elif "asn" in sample or "detected_provider" in sample:  # concentration_risk
+        item = sample
+        provider = item.get("detected_provider") or "Unknown"
+        asn_text = f' (AS{item["asn"]})' if item.get("asn") else ""
+        lines.append(Paragraph(f"Hosting provider: <b>{provider}</b>{asn_text}", styles["FindingLine"]))
+        if item.get("resolved_ips"):
+            lines.append(Paragraph(f'Resolved IP(s): {", ".join(item["resolved_ips"][:3])}', styles["FindingCitation"]))
+    elif "waf_or_cdn_detected" in sample:  # waf_absence
+        item = sample
+        if item.get("waf_or_cdn_detected"):
+            lines.append(Paragraph(f'WAF/CDN detected: <b>{item.get("provider","")}</b> (evidence: {item.get("evidence","")})', styles["FindingLine"]))
+        else:
+            lines.append(Paragraph("No WAF/CDN provider signature detected in response headers.", styles["FindingLine"]))
+
+    return lines
+
+
+def _vendor_detail_block(styles, vendor_entry: dict) -> list:
+    """
+    Returns a list of flowables for one vendor: a vendor-name header (kept
+    together with the FIRST detector's content so the name never strands
+    alone at a page bottom), then one KeepTogether block PER DETECTOR
+    (header bar + that detector's findings) — granular enough that a page
+    break can occur between detectors within a large vendor, while still
+    guaranteeing no individual detector's header is ever separated from
+    its own findings.
+    """
+    blocks = []
+    results = vendor_entry.get("results", [])
+    domain = vendor_entry.get("domain", "")
+
+    vendor_header = [Paragraph(vendor_entry["vendor_name"], styles["VendorName"])]
+    if domain:
+        vendor_header.append(Paragraph(domain, styles["ExecSmall"]))
+    vendor_header.append(Spacer(1, 4))
+
+    for idx, r in enumerate(results):
+        status_text = _classify_status(r)
+        status_color = {"ERROR": SEVERITY_COLORS_EXEC["CRITICAL"], "FINDINGS": SEVERITY_COLORS_EXEC["HIGH"],
+                         "CLEAR": colors.HexColor("#1E8449"), "INFO": SEVERITY_COLORS_EXEC["INFO"]}.get(status_text, MUTED)
+        score_text = f' &#8212; {r["risk_score"]}/100' if r.get("risk_score") is not None else ""
+
+        header_row = Table([[
+            Paragraph(f'<b>{r["detector_label"]}</b>{score_text}', styles["DetectorHeader"]),
+            Paragraph(f'<font color="{status_color.hexval()}"><b>{status_text}</b></font>', styles["DetectorHeaderStatus"]),
+        ]], colWidths=[5.4 * inch, 1.6 * inch])
+        header_row.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), SLATE_LIGHT),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (0, 0), 8), ("RIGHTPADDING", (1, 0), (1, 0), 8),
+        ]))
+
+        detector_block = [header_row, Paragraph(r.get("summary", ""), styles["ExecBody"])]
+        if r.get("error"):
+            detector_block.append(Paragraph(f"Note: {r['error']}", styles["FindingCitation"]))
+        detector_block.extend(_finding_detail_rows(r.get("detector", ""), r.get("detail_items", []), styles))
+        if r.get("detail_items") and len(r["detail_items"]) > 10 and "cve_id" in r["detail_items"][0]:
+            detector_block.append(Paragraph(
+                f'...and {len(r["detail_items"]) - 8} more (see full Excel export for complete list).',
+                styles["FindingCitation"],
+            ))
+        detector_block.append(Spacer(1, 8))
+
+        if idx == 0:
+            # First detector travels WITH the vendor name/domain header, so
+            # the vendor name never strands alone at the bottom of a page.
+            blocks.append(KeepTogether(vendor_header + detector_block))
+        else:
+            blocks.append(KeepTogether(detector_block))
+
+    blocks.append(HRFlowable(width="100%", color=colors.HexColor("#D5DBDB"), thickness=0.5))
+    blocks.append(Spacer(1, 10))
+    return blocks
+
+
 def _registry_domain_block(styles, domain: str, specs: list) -> KeepTogether:
     header = [Paragraph(h, styles["CellTextWhite"]) for h in ["ID", "Detector", "Mode", "Priority", "Status"]]
     rows = [header]
@@ -327,6 +495,20 @@ def build_executive_pdf(
     if vendor_results:
         story.append(Paragraph("Active Detector Results", styles["SectionHeading"]))
         story.append(_detector_summary_table(styles, vendor_results))
+        story.append(PageBreak())
+
+        section_intro = [
+            Paragraph("Detailed Findings by Vendor", styles["SectionHeading"]),
+            Paragraph(
+                "Full detector output for each vendor in scope, including specific CVE identifiers, "
+                "framework citations, and individual findings underlying the summary above.",
+                styles["ExecBody"],
+            ),
+            Spacer(1, 6),
+        ]
+        story.append(KeepTogether(section_intro))
+        for vendor_entry in vendor_results:
+            story.extend(_vendor_detail_block(styles, vendor_entry))
         story.append(PageBreak())
 
     story.append(Paragraph("Detector Registry — Full Coverage Matrix", styles["SectionHeading"]))

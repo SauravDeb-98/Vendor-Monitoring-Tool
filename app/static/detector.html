@@ -88,12 +88,11 @@
   .vendor-chip button:hover { background: var(--danger); color: white; }
 
   .bulk-row { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--line); display: flex; align-items: center; gap: 12px; }
-  .bulk-row label {
+  .bulk-row button {
     font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 7px;
     padding: 7px 12px; cursor: pointer; background: var(--panel-raised);
   }
-  .bulk-row label:hover { border-color: var(--accent); color: var(--accent); }
-  .bulk-row input[type="file"] { display: none; }
+  .bulk-row button:hover { border-color: var(--accent); color: var(--accent); }
   .bulk-row .bulk-hint { font-size: 11.5px; color: var(--muted); }
 
   /* Detector grid */
@@ -319,8 +318,8 @@
     </div>
     <div class="vendor-chip-list" id="vendor-chip-list"></div>
     <div class="bulk-row">
-      <label for="bulk-upload">📄 Upload Excel/CSV (Vendor Name + Vendor Domain columns)</label>
-      <input type="file" id="bulk-upload" accept=".xlsx,.xls,.csv">
+      <button type="button" id="bulk-upload-btn">📄 Upload Excel/CSV (Vendor Name + Vendor Domain columns)</button>
+      <input type="file" id="bulk-upload" accept=".xlsx,.xls,.csv" style="position:absolute; width:1px; height:1px; opacity:0; overflow:hidden;">
       <span class="bulk-hint">Max 25 vendors per run.</span>
     </div>
   </div>
@@ -375,7 +374,10 @@
   <div class="panel" id="results-section">
     <div class="results-toolbar">
       <span class="results-summary" id="results-summary"></span>
-      <button class="export-btn" id="export-btn">⬇ Export to Excel</button>
+      <div style="display:flex; gap:10px;">
+        <button class="export-btn" id="export-pdf-btn">📄 Export Executive PDF</button>
+        <button class="export-btn" id="export-btn">⬇ Export to Excel</button>
+      </div>
     </div>
     <table>
       <thead>
@@ -605,6 +607,10 @@ document.getElementById('vendor-domain-input').addEventListener('keydown', (e) =
   if (e.key === 'Enter') document.getElementById('add-vendor-btn').click();
 });
 
+document.getElementById('bulk-upload-btn').addEventListener('click', () => {
+  document.getElementById('bulk-upload').click();
+});
+
 document.getElementById('bulk-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -761,6 +767,11 @@ function renderResults(job) {
 document.getElementById('export-btn').addEventListener('click', () => {
   if (!currentRequestId) return;
   window.location.href = `/api/detect/${currentRequestId}/export`;
+});
+
+document.getElementById('export-pdf-btn').addEventListener('click', () => {
+  if (!currentRequestId) return;
+  window.location.href = `/api/detect/${currentRequestId}/export-executive-pdf`;
 });
 </script>
 </body>
