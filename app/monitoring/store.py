@@ -126,6 +126,43 @@ def list_vendors() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def update_vendor(vendor_id: str, name: str, domain: str) -> bool:
+    """
+    Updates a vendor's own name/domain (distinct from monitoring config,
+    which is updated via set_monitoring_config). Returns False if the new
+    domain collides with a different, already-existing vendor — domain is
+    UNIQUE in this table, so renaming vendor A's domain to one already
+    used by vendor B would either fail outright (IntegrityError) or
+    silently merge two distinct vendor identities; this function checks
+    first and returns False rather than letting either of those happen.
+    """
+    with _connect() as conn:
+        collision = conn.execute(
+            "SELECT vendor_id FROM vendors WHERE domain = ? AND vendor_id != ?",
+            (domain, vendor_id),
+        ).fetchone()
+        if collision:
+            return False
+        conn.execute("UPDATE vendors SET name = ?, domain = ? WHERE vendor_id = ?", (name, domain, vendor_id))
+        return True
+
+
+def delete_vendor(vendor_id: str) -> None:
+    """
+    Removes a vendor and all dependent rows (monitoring config, score
+    history, alerts). Deletion is in dependency order — children before
+    the parent vendor row — since this store doesn't rely on SQLite
+    foreign-key cascade (cascade isn't enabled by default in this
+    project's connection setup, so an explicit multi-statement delete is
+    the reliable approach rather than assuming ON DELETE CASCADE applies).
+    """
+    with _connect() as conn:
+        conn.execute("DELETE FROM alerts WHERE vendor_id = ?", (vendor_id,))
+        conn.execute("DELETE FROM score_history WHERE vendor_id = ?", (vendor_id,))
+        conn.execute("DELETE FROM monitoring_configs WHERE vendor_id = ?", (vendor_id,))
+        conn.execute("DELETE FROM vendors WHERE vendor_id = ?", (vendor_id,))
+
+
 def get_vendor(vendor_id: str) -> dict | None:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM vendors WHERE vendor_id = ?", (vendor_id,)).fetchone()

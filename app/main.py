@@ -23,7 +23,7 @@ with the session token that created it. The job-status and report-download
 endpoints both verify the requester's session token matches the job's
 owner before returning anything — a visitor who somehow learns or guesses
 another job's UUID still cannot view its status or download its report.
-This is in addition to, not a replacement for, the 30-minute auto-delete
+This is in addition to, not a replacement for, the time-bounded auto-delete
 above; the two protections cover different threat windows.
 
 Audit logging: every scan is recorded in a local SQLite file
@@ -52,13 +52,14 @@ import secrets
 import time
 import uuid
 from collections import defaultdict, deque
+from typing import Optional
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.ingestion import parse_vendor_excel, IngestionError
+from app.ingestion import parse_vendor_excel, IngestionError, Vendor
 from app.scanner.engine import scan_vendors
 from app.compliance.engine import evaluate_compliance, deduplicate_and_cap
 from app.scoring import compute_score
@@ -66,7 +67,9 @@ from app.ai_analysis import generate_vendor_narrative, generate_executive_summar
 from app.reporting.pdf_builder import build_pdf_report
 from app import audit_log
 from app import report_encryption
+from app import report_store
 from app import detector_routes
+from app.domain_discovery import discover_domain
 from app.monitoring.scheduler import run_monitoring_scheduler_loop
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -76,8 +79,23 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 MAX_VENDORS_PER_RUN = 25         # protects compute even for legitimate use
 RATE_LIMIT_WINDOW_SECONDS = 86400
 RATE_LIMIT_MAX_REQUESTS = 5      # per-IP scans per day, independent of AI key use
-REPORT_RETENTION_MINUTES = 30    # generated PDFs are deleted this long after creation
+REPORT_RETENTION_MINUTES = 60 * 24 * 7  # 7 days: generated PDFs are deleted this long after creation,
+                                          # so a vendor's report stays downloadable from the inventory
+                                          # view for a full week rather than only the original 30 minutes
 CLEANUP_SWEEP_INTERVAL_SECONDS = 120  # how often the background sweep checks for expired files
+
+
+def _retention_human() -> str:
+    """Human-readable retention window for user-facing expiry messages,
+    so changing REPORT_RETENTION_MINUTES never requires touching message
+    strings scattered across the file."""
+    days = REPORT_RETENTION_MINUTES // (60 * 24)
+    if days >= 1 and REPORT_RETENTION_MINUTES % (60 * 24) == 0:
+        return f"{days} day{'s' if days != 1 else ''}"
+    hours = REPORT_RETENTION_MINUTES // 60
+    if hours >= 1 and REPORT_RETENTION_MINUTES % 60 == 0:
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    return f"{REPORT_RETENTION_MINUTES} minutes"
 SESSION_COOKIE_NAME = "vrt_session"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24  # cookie itself lasts 24h; jobs still expire in 30min regardless
 ADMIN_STATS_TOKEN = os.environ.get("ADMIN_STATS_TOKEN")  # set this in Render's env vars to enable /api/admin/stats
@@ -102,6 +120,10 @@ async def _cleanup_expired_reports() -> None:
     Scanning the directory directly (rather than only relying on the
     in-memory _jobs dict) also cleans up any file left behind by a process
     restart, since _jobs is not persisted across restarts.
+
+    Also sweeps report_store's vendor_reports metadata rows on the same
+    cadence, so the inventory UI never offers a "download" link for a
+    report whose underlying encrypted PDF has already been removed above.
     """
     retention_seconds = REPORT_RETENTION_MINUTES * 60
     while True:
@@ -122,6 +144,10 @@ async def _cleanup_expired_reports() -> None:
                             job["report_path"] = None
                 except OSError:
                     continue  # file may have been removed concurrently; skip
+            try:
+                report_store.delete_expired_report_rows(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)))
+            except Exception:
+                pass  # metadata cleanup is best-effort; never let it kill the sweep loop
         except Exception:
             pass  # never let the sweep loop die from a transient error
         await asyncio.sleep(CLEANUP_SWEEP_INTERVAL_SECONDS)
@@ -130,6 +156,7 @@ async def _cleanup_expired_reports() -> None:
 @app.on_event("startup")
 async def _start_background_tasks() -> None:
     audit_log.init_audit_log()
+    report_store.init_store()
     asyncio.create_task(_cleanup_expired_reports())
     asyncio.create_task(run_monitoring_scheduler_loop())
 
@@ -211,7 +238,8 @@ def _check_rate_limit(ip: str) -> None:
     bucket.append(now)
 
 
-async def _run_assessment(job_id: str, vendors, api_key: str | None, started_at: float) -> None:
+async def _run_assessment(job_id: str, vendors, api_key: Optional[str], started_at: float,
+                           owner_session_hash: str) -> None:
     job = _jobs[job_id]
     try:
         job["status"] = "scanning"
@@ -265,6 +293,19 @@ async def _run_assessment(job_id: str, vendors, api_key: str | None, started_at:
         job["summary"] = [
             {"name": v["name"], "score": v["score"], "tier": v["tier"]} for v in vendor_reports
         ]
+
+        # Persist each vendor to the inventory and record this report's
+        # metadata against it, so the inventory view can offer a
+        # re-download link any time within REPORT_RETENTION_MINUTES.
+        try:
+            for v in vendor_reports:
+                vendor_id = report_store.upsert_vendor(v["name"], v["website"], v["domain"], owner_session_hash)
+                report_store.record_report(
+                    vendor_id, job_id, v["score"], v["tier"], owner_session_hash, REPORT_RETENTION_MINUTES,
+                )
+        except Exception:
+            pass  # inventory persistence is additive; never fail the scan job over it
+
         audit_log.record_scan_finished(job_id, "complete", started_at)
     except Exception as exc:
         job["status"] = "failed"
@@ -279,7 +320,7 @@ async def _run_assessment(job_id: str, vendors, api_key: str | None, started_at:
 async def start_scan(
     request: Request,
     file: UploadFile = File(...),
-    claude_api_key: str | None = Form(default=None),
+    claude_api_key: Optional[str] = Form(default=None),
 ):
     ip = _client_ip(request)
     _check_rate_limit(ip)
@@ -312,11 +353,172 @@ async def start_scan(
 
     api_key = claude_api_key.strip() if claude_api_key and claude_api_key.strip() else None
     audit_log.record_scan_started(job_id, session_token, ip, len(vendors), used_ai_key=api_key is not None)
-    asyncio.create_task(_run_assessment(job_id, vendors, api_key, started_at))
+    asyncio.create_task(_run_assessment(job_id, vendors, api_key, started_at, report_store.hash_session(session_token)))
 
     result = JSONResponse({"job_id": job_id, "vendor_count": len(vendors)})
     _set_session_cookie_if_new(request, result, session_token)
     return result
+
+
+@app.post("/api/scan-single")
+async def start_single_vendor_scan(
+    request: Request,
+    vendor_name: str = Form(...),
+    vendor_website: Optional[str] = Form(default=None),
+    claude_api_key: Optional[str] = Form(default=None),
+):
+    """
+    Single-vendor counterpart to /api/scan, for the "Add a Vendor" entry
+    point (name + optional website) rather than bulk Excel import. If no
+    website is supplied, falls back to the same passive domain-discovery
+    heuristic already used by the Threat Detector tool's
+    /api/vendors/discover-domain (see app/domain_discovery.py) — a
+    best-effort guess, not a verified identity match, so the discovered
+    domain is echoed back in the response for the user to confirm/correct
+    before relying on the resulting report.
+    """
+    ip = _client_ip(request)
+    _check_rate_limit(ip)
+    session_token, _is_new = _resolve_session_token(request)
+
+    name = vendor_name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Vendor name is required.")
+
+    website = (vendor_website or "").strip()
+    discovery_confidence = None
+    if website:
+        from app.ingestion import clean_url, extract_domain  # reuse existing cleaning logic
+        clean = clean_url(website)
+        if clean is None:
+            raise HTTPException(status_code=400, detail="That doesn't look like a valid website URL.")
+        domain = extract_domain(clean)
+    else:
+        discovery = await discover_domain(name)
+        if not discovery.discovered_domain:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not automatically find a website for '{name}'. "
+                       "Please provide the vendor's website URL directly.",
+            )
+        domain = discovery.discovered_domain
+        clean = f"https://{domain}"
+        discovery_confidence = discovery.confidence
+
+    vendor = Vendor(name=name, website=clean, domain=domain)
+
+    job_id = str(uuid.uuid4())
+    started_at = time.time()
+    _jobs[job_id] = {
+        "status": "queued", "progress": "Queued", "vendor_count": 1,
+        "owner_session": session_token,
+    }
+    if discovery_confidence:
+        _jobs[job_id]["discovered_domain"] = domain
+        _jobs[job_id]["discovery_confidence"] = discovery_confidence
+
+    api_key = claude_api_key.strip() if claude_api_key and claude_api_key.strip() else None
+    audit_log.record_scan_started(job_id, session_token, ip, 1, used_ai_key=api_key is not None)
+    asyncio.create_task(_run_assessment(job_id, [vendor], api_key, started_at, report_store.hash_session(session_token)))
+
+    result = JSONResponse({
+        "job_id": job_id, "vendor_count": 1,
+        "discovered_domain": domain if discovery_confidence else None,
+        "discovery_confidence": discovery_confidence,
+    })
+    _set_session_cookie_if_new(request, result, session_token)
+    return result
+
+
+@app.get("/api/risk-assessment/vendors")
+async def list_vendor_inventory(request: Request):
+    """
+    Returns the persistent vendor inventory for the requesting browser
+    session only (matched via the same one-way session hash used for
+    report ownership elsewhere) — not a global vendor list. A first-time
+    visitor with no session cookie yet simply gets an empty inventory.
+
+    Namespaced under /api/risk-assessment/ (rather than the shorter
+    /api/vendors) because the Threat Detector tool already owns
+    /api/vendors for its own, differently-shaped continuous-monitoring
+    inventory — see detector_routes.py. Both tools' routers are mounted
+    on the same FastAPI app, so this avoids a silent route collision
+    where one endpoint would shadow the other.
+    """
+    session_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not session_token:
+        return JSONResponse({"vendors": []})
+    owner_hash = report_store.hash_session(session_token)
+    vendors = report_store.list_vendors_for_owner(owner_hash)
+    for v in vendors:
+        latest = report_store.get_latest_report_for_vendor(v["vendor_id"], owner_hash)
+        v["latest_report"] = latest
+    return JSONResponse({"vendors": vendors})
+
+
+@app.get("/api/risk-assessment/vendors/{vendor_id}/reports")
+async def list_vendor_report_history(vendor_id: str, request: Request):
+    session_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not session_token:
+        raise HTTPException(status_code=403, detail="No active session.")
+    owner_hash = report_store.hash_session(session_token)
+    vendor = report_store.get_vendor(vendor_id)
+    if not vendor or vendor["owner_session_hash"] != owner_hash:
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+    reports = report_store.list_reports_for_vendor(vendor_id, owner_hash)
+    return JSONResponse({"vendor": vendor, "reports": reports})
+
+
+@app.get("/api/risk-assessment/vendors/{vendor_id}/reports/{report_id}/download")
+async def download_vendor_report(vendor_id: str, report_id: str, request: Request):
+    """
+    Lets a user click a vendor in the inventory and re-download its most
+    recent (or any historical, within retention) report directly by
+    report_id, without needing to remember the original job_id. Ownership
+    is enforced the same way as /api/jobs/{job_id}/report: the requesting
+    session's hash must match the report row's owner_session_hash.
+    """
+    session_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not session_token:
+        raise HTTPException(status_code=403, detail="No active session.")
+    owner_hash = report_store.hash_session(session_token)
+    vendor = report_store.get_vendor(vendor_id)
+    if not vendor or vendor["owner_session_hash"] != owner_hash:
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+
+    reports = report_store.list_reports_for_vendor(vendor_id, owner_hash)
+    report = next((r for r in reports if r["report_id"] == report_id), None)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found.")
+
+    job_id = report["job_id"]
+    report_path = os.path.join(OUTPUT_DIR, f"{job_id}.pdf.enc")
+    if not os.path.exists(report_path):
+        raise HTTPException(
+            status_code=410,
+            detail=f"This report has expired and was deleted after {_retention_human()} "
+                   f"for data confidentiality. Please re-run the assessment to generate a new report.",
+        )
+
+    def _read_and_decrypt() -> bytes:
+        with open(report_path, "rb") as f:
+            ciphertext = f.read()
+        return report_encryption.decrypt_bytes(ciphertext)
+
+    try:
+        plaintext_pdf = await asyncio.to_thread(_read_and_decrypt)
+    except report_encryption.InvalidToken:
+        raise HTTPException(
+            status_code=410,
+            detail="This report can no longer be decrypted (the server may have restarted). "
+                   "Please re-run the assessment to generate a new report.",
+        )
+
+    return Response(
+        content=plaintext_pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{vendor["name"]}_risk_assessment_report.pdf"'},
+    )
 
 
 @app.get("/api/jobs/{job_id}")
@@ -337,7 +539,7 @@ async def get_job_report(job_id: str, request: Request):
     if job.get("status") == "expired":
         raise HTTPException(
             status_code=410,
-            detail=f"This report has expired and was deleted {REPORT_RETENTION_MINUTES} minutes after "
+            detail=f"This report has expired and was deleted {_retention_human()} after "
                    f"generation for data confidentiality. Please re-run the assessment to generate a new report.",
         )
     if job.get("status") != "complete":
@@ -346,7 +548,7 @@ async def get_job_report(job_id: str, request: Request):
     if not report_path or not os.path.exists(report_path):
         raise HTTPException(
             status_code=410,
-            detail=f"This report has expired and was deleted {REPORT_RETENTION_MINUTES} minutes after "
+            detail=f"This report has expired and was deleted {_retention_human()} after "
                    f"generation for data confidentiality. Please re-run the assessment to generate a new report.",
         )
 

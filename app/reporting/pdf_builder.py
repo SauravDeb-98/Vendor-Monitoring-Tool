@@ -10,6 +10,7 @@ Builds a dynamic PDF report using ReportLab Platypus:
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime, timezone
 
 from reportlab.lib import colors
@@ -18,7 +19,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle,
+    SimpleDocTemplate, Paragraph, Spacer, CondPageBreak, Table, TableStyle,
     HRFlowable, KeepTogether,
 )
 from reportlab.graphics.shapes import Drawing
@@ -151,29 +152,86 @@ def _tier_badge(tier_label: str, score: int, styles) -> Table:
     return t
 
 
+# Soft-hyphenation points (U+00AD) for the specific long words that appear
+# in this codebase's compliance citation text (NIST/ISO/DORA/GDPR phrases
+# in compliance/engine.py). A soft hyphen is invisible unless the layout
+# engine actually needs to break the line there, in which case it renders
+# as a normal hyphen at a real syllable boundary — e.g. "confidenti-
+# ality" instead of an arbitrary "confi/dentiality" or "MEDI/UM" break.
+# This is a small, deliberately hardcoded set (not a general hyphenation
+# library) because the input is a known, bounded vocabulary of citation
+# text, not arbitrary user content — pulling in a hyphenation dependency
+# for ~15 fixed words would be more machinery than the problem warrants.
+_SOFT_HYPHENS = {
+    "confidentiality": "confi\u00adden\u00adti\u00adal\u00adi\u00adty",
+    "authentication": "au\u00adthen\u00adti\u00adca\u00adtion",
+    "availability": "avail\u00ada\u00adbil\u00adi\u00adty",
+    "concentration": "con\u00adcen\u00adtra\u00adtion",
+    "configuration": "con\u00adfig\u00adu\u00ada\u00adtion",
+    "cryptographic": "cryp\u00adto\u00adgraph\u00adic",
+    "cryptography": "cryp\u00adtog\u00adra\u00adphy",
+    "decommission": "de\u00adcom\u00admis\u00adsion",
+    "establishment": "es\u00adtab\u00adlish\u00adment",
+    "firmware": "firm\u00adware",
+    "recommendation": "rec\u00adom\u00admen\u00addation",
+    "relationships": "re\u00adla\u00adtion\u00adships",
+    "requirements": "re\u00adquire\u00adments",
+    "transmission": "trans\u00admis\u00adsion",
+    "transparency": "trans\u00adpar\u00aden\u00adcy",
+    "vulnerabilities": "vul\u00adner\u00ada\u00adbil\u00adi\u00adties",
+    "vulnerability": "vul\u00adner\u00ada\u00adbil\u00adi\u00adty",
+}
+
+
+def _hyphenate(text: str) -> str:
+    """Replaces any whole-word match (case-insensitive) of a known long
+    word with its soft-hyphenated form, leaving everything else
+    (capitalization, surrounding punctuation, unrelated text) untouched."""
+    def _replace(match: "re.Match") -> str:
+        word = match.group(0)
+        hyphenated = _SOFT_HYPHENS[word.lower()]
+        return hyphenated.upper() if word.isupper() else hyphenated
+    pattern = r"\b(" + "|".join(re.escape(w) for w in _SOFT_HYPHENS) + r")\b"
+    return re.sub(pattern, _replace, text, flags=re.IGNORECASE)
+
+
 def _findings_matrix(findings: list, styles) -> Table:
     header = ["Finding", "Sev.", "NIST", "ISO 27001", "DORA", "GDPR"]
     rows = [header]
     for f in findings:
         rows.append([
-            Paragraph(f.finding, styles["Small"]),
+            Paragraph(_hyphenate(f.finding), styles["Small"]),
             Paragraph(f.severity.upper(), styles["Small"]),
-            Paragraph("<br/>".join(f.nist) or "—", styles["Small"]),
-            Paragraph("<br/>".join(f.iso27001) or "—", styles["Small"]),
-            Paragraph("<br/>".join(f.dora) or "—", styles["Small"]),
-            Paragraph("<br/>".join(f.gdpr) or "—", styles["Small"]),
+            Paragraph(_hyphenate("<br/>".join(f.nist)) or "—", styles["Small"]),
+            Paragraph(_hyphenate("<br/>".join(f.iso27001)) or "—", styles["Small"]),
+            Paragraph(_hyphenate("<br/>".join(f.dora)) or "—", styles["Small"]),
+            Paragraph(_hyphenate("<br/>".join(f.gdpr)) or "—", styles["Small"]),
         ])
     if len(rows) == 1:
         rows.append([Paragraph("No findings.", styles["Small"])] + ["—"] * 5)
 
-    t = Table(rows, colWidths=[140, 35, 65, 70, 65, 65], repeatRows=1)
+    # Column widths total 525pt (the full usable LETTER-page width after
+    # 0.6in margins). Sev. is 50pt specifically because "MEDIUM" at this
+    # table's 8pt font plus default 6pt left/right cell padding measures
+    # ~44.5pt — 42pt (an earlier attempt at rebalancing) was just under
+    # that and still wrapped mid-word ("MEDIU/M"); 50pt gives real headroom.
+    # GDPR and ISO 27001 get the largest remaining share since their
+    # citation text includes the longest parenthetical phrases (e.g.
+    # "(ongoing confidentiality/integrity)").
+    t = Table(rows, colWidths=[122, 50, 68, 90, 65, 80], repeatRows=1)
     style_cmds = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        # VALIGN changed from TOP to MIDDLE: when one cell in a row wraps
+        # to 3-4 lines (e.g. a long NIST/ISO control list) while a sibling
+        # cell is a single short word ("HIGH"), top-aligning left the short
+        # cell's text stranded at the top of a much taller row with a big
+        # empty gap beneath it. Middle-aligning centers every cell's content
+        # within the row's actual (tallest-cell-driven) height instead.
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
@@ -275,7 +333,13 @@ def build_pdf_report(
     ]
     summary_table.setStyle(TableStyle(style_cmds))
     story.append(summary_table)
-    story.append(PageBreak())
+    # Conditional, not unconditional: for a short report (1-2 vendors) the
+    # summary table ends well up the page, and forcing PageBreak() here
+    # left "Per-Vendor Breakdown" stranded at the top of an otherwise mostly
+    # blank page 2 — the same gap pattern fixed below for the Methodology
+    # section. CondPageBreak only jumps to a new page if the heading plus a
+    # reasonable amount of body content genuinely wouldn't fit.
+    story.append(CondPageBreak(3 * inch))
 
     # --- Per-vendor breakdown ---
     story.append(Paragraph("Per-Vendor Breakdown", styles["SectionHeading"]))
@@ -301,7 +365,14 @@ def build_pdf_report(
         story.append(Spacer(1, 16))
 
     # --- Methodology / disclaimer footer ---
-    story.append(PageBreak())
+    # Previously this always started with PageBreak(), which forced a fresh
+    # page even when the per-vendor section ended with most of a page still
+    # blank (e.g. a single-vendor report) — exactly the "huge gap after each
+    # section" symptom. CondPageBreak only breaks if the upcoming content
+    # genuinely won't fit in the remaining space on the current page, so a
+    # short report's methodology section flows directly below the last
+    # vendor block instead of jumping to a near-empty new page.
+    story.append(CondPageBreak(2.2 * inch))
     story.append(Paragraph("Methodology & Limitations", styles["SectionHeading"]))
     story.append(Paragraph(
         "Scores are derived from a deterministic deduction model starting at 100 points, with "

@@ -222,6 +222,29 @@ def get_registry_summary() -> dict:
     }
 
 
+def get_active_registry_summary() -> dict:
+    """
+    Same shape as get_registry_summary(), but scoped to only the
+    ACTIVE/BYO_KEY detectors that are actually shown in the public
+    /api/registry response and the dashboard's registry table. Use this
+    for any KPI/summary number displayed alongside that table (e.g.
+    'Active Detectors' or 'High-Priority Slots'), so the count always
+    matches what a viewer can actually see in the rows below it — using
+    the unfiltered get_registry_summary() there would show a high-priority
+    count derived from ~20 rows the table itself no longer displays.
+    """
+    visible = [d for d in DETECTOR_REGISTRY if d.implementation_status in ("ACTIVE", "BYO_KEY")]
+    return {
+        "total_detectors": len(visible),
+        "active": sum(1 for d in visible if d.implementation_status == "ACTIVE"),
+        "byo_key": sum(1 for d in visible if d.implementation_status == "BYO_KEY"),
+        "not_implemented": 0,
+        "continuous_capable": sum(1 for d in visible if d.monitoring_mode in ("Continuous", "Both")),
+        "ad_hoc_capable": sum(1 for d in visible if d.monitoring_mode in ("Ad-Hoc", "Both")),
+        "high_priority_count": sum(1 for d in visible if d.risk_priority == "High"),
+    }
+
+
 def get_active_detector_specs() -> list[DetectorSpec]:
     return [d for d in DETECTOR_REGISTRY if d.implementation_status == "ACTIVE"]
 
@@ -230,4 +253,17 @@ def get_by_domain() -> dict[str, list[DetectorSpec]]:
     out: dict[str, list[DetectorSpec]] = {}
     for d in DETECTOR_REGISTRY:
         out.setdefault(d.domain, []).append(d)
+    return out
+
+
+def get_active_by_domain() -> dict[str, list[DetectorSpec]]:
+    """Same shape as get_by_domain(), scoped to ACTIVE/BYO_KEY specs only —
+    used everywhere the registry is rendered to an end user (the live
+    dashboard table and the downloadable executive PDF), so NOT_IMPLEMENTED
+    rows never reach a viewer-facing surface, while full_registry.py itself
+    still documents all 35 slots internally."""
+    out: dict[str, list[DetectorSpec]] = {}
+    for d in DETECTOR_REGISTRY:
+        if d.implementation_status in ("ACTIVE", "BYO_KEY"):
+            out.setdefault(d.domain, []).append(d)
     return out

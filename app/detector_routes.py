@@ -34,7 +34,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.detectors.registry import DetectorType, ALL_DETECTOR_TYPES, DETECTOR_LABELS, DETECTOR_DESCRIPTIONS
 from app.detectors.orchestrator import run_detectors_for_vendors
-from app.detectors.full_registry import DETECTOR_REGISTRY, get_registry_summary, get_by_domain
+from app.detectors.full_registry import get_active_registry_summary, get_active_by_domain
 from app.domain_discovery import discover_domain
 from app.monitoring import store as monitoring_store
 from app.ingestion import _clean_url, _extract_domain
@@ -85,8 +85,232 @@ async def discover_vendor_domain(payload: dict):
 
 @router.get("/api/vendors")
 async def list_vendor_inventory():
+    """
+    Returns every vendor in the shared inventory (this tool has no login,
+    so the inventory is global, not per-session — consistent with how
+    /api/monitoring and /api/alerts already behave). Each vendor entry is
+    enriched with its monitoring mode and most recent vulnerability score
+    (if any), so the Vendors tab list view can render a useful summary row
+    per vendor without firing a separate request per vendor.
+    """
     monitoring_store.init_store()
-    return JSONResponse({"vendors": monitoring_store.list_vendors()})
+    vendors = monitoring_store.list_vendors()
+    for v in vendors:
+        config = monitoring_store.get_monitoring_config(v["vendor_id"])
+        v["monitoring_mode"] = config["mode"] if config else "ad_hoc"
+        v["monitoring_frequency"] = config["frequency"] if config else None
+        latest = monitoring_store.get_latest_score(v["vendor_id"], "vulnerability")
+        v["latest_score"] = latest["score"] if latest else None
+        v["latest_rating"] = latest["rating_letter"] if latest else None
+        v["last_scanned_at"] = latest["recorded_at"] if latest else None
+    return JSONResponse({"vendors": vendors})
+
+
+@router.get("/api/vendors/{vendor_id}")
+async def get_vendor_detail(vendor_id: str):
+    """
+    Combined detail view for the Vendors tab: vendor identity, monitoring
+    configuration (if any), and full score history across all detector
+    types. This intentionally returns the same shape as the pre-existing
+    GET /api/monitoring/{vendor_id} (kept as-is for backward compatibility
+    with anything already calling it) — exposed under /api/vendors/ too
+    since that's the more discoverable path for a vendor-detail UI to call.
+    """
+    monitoring_store.init_store()
+    vendor = monitoring_store.get_vendor(vendor_id)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found in inventory.")
+    config = monitoring_store.get_monitoring_config(vendor_id)
+    history = monitoring_store.get_score_history(vendor_id, limit=200)
+    return JSONResponse({"vendor": vendor, "config": config, "score_history": history})
+
+
+@router.put("/api/vendors/{vendor_id}")
+async def update_vendor_detail(vendor_id: str, request: Request, payload: dict):
+    """
+    Updates a vendor's own name/domain AND, optionally, its monitoring
+    settings in one call — the "modify everything" entry point for the
+    Vendors tab's edit view. Vendor identity (name/domain) has no
+    per-session ownership concept in this tool (the inventory itself is
+    shared/global, matching list_vendor_inventory above), but monitoring
+    settings retain the existing ownership check from
+    set_continuous_monitoring, so editing someone else's monitoring
+    schedule still requires being the session that originally set it up.
+    """
+    monitoring_store.init_store()
+    vendor = monitoring_store.get_vendor(vendor_id)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found in inventory.")
+
+    payload = payload or {}
+    new_name = (payload.get("name") or vendor["name"]).strip()
+    new_domain_raw = (payload.get("domain") or vendor["domain"]).strip()
+    cleaned = _clean_url(new_domain_raw) or f"https://{new_domain_raw}"
+    new_domain = _extract_domain(cleaned)
+
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Vendor name cannot be empty.")
+
+    ok = monitoring_store.update_vendor(vendor_id, new_name, new_domain)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Another vendor already uses the domain '{new_domain}'. Choose a different domain or merge the two entries manually.",
+        )
+
+    if "monitoring" in payload:
+        m = payload["monitoring"] or {}
+        session_token = _get_session_from_request(request)
+        session_hash = _hash_session(session_token)
+        existing_config = monitoring_store.get_monitoring_config(vendor_id)
+        if existing_config and existing_config.get("owner_session_hash"):
+            if existing_config["owner_session_hash"] != session_hash:
+                raise HTTPException(status_code=403, detail="Not authorized to modify monitoring for this vendor.")
+
+        requested_types = m.get("detector_types") or (existing_config["detector_types"] if existing_config else None) or [DetectorType.VULNERABILITY.value]
+        try:
+            detector_types = [DetectorType(t).value for t in requested_types]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid detector type: {exc}")
+
+        frequency = m.get("frequency", existing_config["frequency"] if existing_config else "daily")
+        if frequency not in ("daily", "weekly"):
+            raise HTTPException(status_code=400, detail="frequency must be 'daily' or 'weekly'.")
+
+        mode = m.get("mode", existing_config["mode"] if existing_config else "ad_hoc")
+        if mode not in ("ad_hoc", "continuous"):
+            raise HTTPException(status_code=400, detail="mode must be 'ad_hoc' or 'continuous'.")
+
+        monitoring_store.set_monitoring_config(
+            vendor_id=vendor_id,
+            mode=mode,
+            detector_types=detector_types,
+            frequency=frequency,
+            alert_threshold_points=int(m.get("alert_threshold_points", existing_config["alert_threshold_points"] if existing_config else 20)),
+            owner_session_hash=session_hash,
+            webhook_url=m.get("webhook_url", existing_config.get("webhook_url") if existing_config else None),
+            notify_email=m.get("notify_email", existing_config.get("notify_email") if existing_config else None),
+        )
+
+    return JSONResponse({"vendor_id": vendor_id, "status": "updated", "name": new_name, "domain": new_domain})
+
+
+@router.delete("/api/vendors/{vendor_id}")
+async def delete_vendor_detail(vendor_id: str):
+    """Removes a vendor from the inventory entirely, including monitoring
+    config, score history, and alerts — see monitoring_store.delete_vendor
+    for why this is a multi-table delete rather than relying on cascade."""
+    monitoring_store.init_store()
+    vendor = monitoring_store.get_vendor(vendor_id)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found in inventory.")
+    monitoring_store.delete_vendor(vendor_id)
+    return JSONResponse({"vendor_id": vendor_id, "status": "deleted"})
+
+
+@router.post("/api/vendors/{vendor_id}/rescan")
+async def rescan_vendor(vendor_id: str, payload: dict = None):
+    """
+    Convenience wrapper around the existing ad-hoc /api/detect flow for a
+    single, already-known vendor: looks up the vendor's current name/domain
+    from the inventory so the Vendors tab can offer a one-click "Scan now"
+    action without the caller needing to re-supply vendor identity. Uses
+    the vendor's existing monitoring detector_types if configured,
+    otherwise defaults to the vulnerability detector — same default
+    set_continuous_monitoring uses when no detector_types are specified.
+    """
+    monitoring_store.init_store()
+    vendor = monitoring_store.get_vendor(vendor_id)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found in inventory.")
+
+    config = monitoring_store.get_monitoring_config(vendor_id)
+    requested_types = (payload or {}).get("detector_types") or (config["detector_types"] if config else None) or [DetectorType.VULNERABILITY.value]
+    try:
+        # _run_detect_job (and run_detectors_for_vendors underneath it)
+        # expects a list of DetectorType enum members, matching the
+        # convention used by the original /api/detect endpoint
+        # (start_detect_job, a few lines below) — NOT a list of plain
+        # .value strings. An earlier version of this endpoint passed
+        # strings here, which crashed with "'str' object has no attribute
+        # 'value'" once the job actually ran the detectors.
+        detector_types = [DetectorType(t) for t in requested_types]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid detector type: {exc}")
+
+    job_id = str(uuid.uuid4())
+    _detect_jobs[job_id] = {"status": "queued", "results": None, "error": None}
+    asyncio.create_task(_run_detect_job(job_id, [(vendor["name"], vendor["domain"])], detector_types))
+    return JSONResponse({"request_id": job_id})
+
+
+@router.get("/api/vendors/{vendor_id}/last-report")
+async def download_vendor_last_report(vendor_id: str):
+    """
+    Builds and returns a PDF report from the vendor's most recently
+    recorded scores in score_history — NOT from the in-memory _detect_jobs
+    dict, since that's ephemeral (cleared on server restart, and never
+    keyed by vendor_id in the first place). This means "download last
+    report" works for any vendor with at least one persisted scan result,
+    regardless of how long ago that scan ran or whether the original
+    detect job/process is still around.
+    """
+    monitoring_store.init_store()
+    vendor = monitoring_store.get_vendor(vendor_id)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found in inventory.")
+
+    history = monitoring_store.get_score_history(vendor_id, limit=200)
+    if not history:
+        raise HTTPException(
+            status_code=404,
+            detail="No scan results recorded yet for this vendor. Run a scan first.",
+        )
+
+    # Reduce to the single latest row per detector_type (history is already
+    # ordered most-recent-first from get_score_history).
+    latest_by_type: dict[str, dict] = {}
+    for row in history:
+        if row["detector_type"] not in latest_by_type:
+            latest_by_type[row["detector_type"]] = row
+
+    vendor_results = [{
+        "vendor_name": vendor["name"],
+        "domain": vendor["domain"],
+        "results": [
+            {
+                "detector": row["detector_type"],
+                "detector_label": DETECTOR_LABELS.get(DetectorType(row["detector_type"]), row["detector_type"]),
+                "risk_score": row["score"],
+                "rating_letter": row["rating_letter"],
+                "summary": row["summary"],
+                "detail_items": [],
+                "error": None,
+            }
+            for row in latest_by_type.values()
+        ],
+    }]
+
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        output_path = os.path.join(tmp_dir, "vendor_report.pdf")
+        build_executive_pdf(
+            output_path=output_path,
+            vendor_results=vendor_results,
+            registry_by_domain=get_active_by_domain(),
+            mttd_seconds=None,
+            drift_index=None,
+            generated_for=f"{vendor['name']} — Threat Detection Report",
+        )
+        with open(output_path, "rb") as f:
+            pdf_bytes = f.read()
+
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in vendor["name"])
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_threat_report.pdf"'},
+    )
 
 
 async def _resolve_vendor_input(vendor_name: str, domain: str | None) -> tuple[str, str, dict | None]:
@@ -111,12 +335,13 @@ async def _run_detect_job(job_id: str, vendor_inputs: list, detector_types: list
         job["status"] = "running"
         resolved_vendors = []
         discovery_notes = []
+        vendor_ids_by_domain = {}
         for name, domain in vendor_inputs:
             vname, rdomain, discovery_info = await _resolve_vendor_input(name, domain)
             resolved_vendors.append(SimpleVendor(vname, rdomain))
             if discovery_info:
                 discovery_notes.append(discovery_info)
-            monitoring_store.upsert_vendor(vname, rdomain)
+            vendor_ids_by_domain[rdomain] = monitoring_store.upsert_vendor(vname, rdomain)
 
         results_by_domain = await run_detectors_for_vendors(resolved_vendors, detector_types)
 
@@ -139,6 +364,24 @@ async def _run_detect_job(job_id: str, vendor_inputs: list, detector_types: list
                     for r in vendor_results
                 ],
             })
+            # Record each detector's result to score_history, the same way
+            # the continuous-monitoring scheduler does (see
+            # monitoring/scheduler.py:_run_one_monitored_vendor). Before
+            # this, score_history was only ever populated for vendors with
+            # continuous monitoring turned on — an ad-hoc, one-off scan
+            # left no trace at all, so a vendor management view with a
+            # "latest results" panel would show nothing for the vast
+            # majority of vendors (anyone who had only ever run a manual
+            # scan, which is everyone before continuous monitoring exists
+            # as a UI feature).
+            vendor_id = vendor_ids_by_domain.get(v.domain)
+            if vendor_id:
+                for r in vendor_results:
+                    if r.error:
+                        continue  # don't pollute history with a failed-detector run
+                    monitoring_store.record_score(
+                        vendor_id, r.detector.value, r.risk_score, r.rating_letter, r.summary,
+                    )
 
         job["status"] = "complete"
         job["results"] = output
@@ -291,13 +534,18 @@ async def list_alerts():
 @router.get("/api/registry")
 async def get_full_registry():
     """
-    Returns the complete 35-detector registry, including the ~23 entries
-    that are NOT_IMPLEMENTED with their specific gap reasons — this is
-    deliberately not filtered down to only the working detectors, so the
-    dashboard can show real intended coverage alongside what's actually live.
+    Returns the detector registry, filtered to ACTIVE and BYO_KEY entries
+    only — the ~23 NOT_IMPLEMENTED slots are intentionally excluded from
+    this public-facing response (per product decision: showing a long list
+    of "not implemented" rows read as clutter/broken functionality to
+    visitors, rather than as the transparency gesture it was intended to
+    be). The full 35-slot catalog, including every NOT_IMPLEMENTED entry
+    and its specific gap_category/gap_reason, still lives in
+    app/detectors/full_registry.py as internal documentation of deliberate
+    scope decisions — it's just not served here anymore.
     """
     return JSONResponse({
-        "summary": get_registry_summary(),
+        "summary": get_active_registry_summary(),
         "by_domain": {
             domain: [
                 {
@@ -309,7 +557,7 @@ async def get_full_registry():
                 }
                 for d in specs
             ]
-            for domain, specs in get_by_domain().items()
+            for domain, specs in get_active_by_domain().items()
         },
     })
 
@@ -330,7 +578,7 @@ async def get_kpi_metrics():
         if config and config["mode"] == "continuous":
             continuous_configs.append(config)
 
-    registry_summary = get_registry_summary()
+    registry_summary = get_active_registry_summary()
     recent_alerts = monitoring_store.list_recent_alerts(limit=10)
 
     return JSONResponse({
@@ -417,8 +665,11 @@ async def export_detect_job_to_excel(request_id: str):
 async def export_detect_job_to_executive_pdf(request_id: str):
     """
     Generates the boardroom-ready executive PDF (Slate/Deep-Blue theme,
-    KPIs including MTTD and Security Drift Index, full 35-detector
+    KPIs including MTTD and Security Drift Index, the active detector
     registry matrix, and operational runbook) for a completed detect job.
+    The registry matrix here matches the live dashboard: ACTIVE/BYO_KEY
+    detectors only, with NOT_IMPLEMENTED slots excluded for the same
+    consistency reason as the dashboard's /api/registry endpoint.
     """
     job = _detect_jobs.get(request_id)
     if not job:
@@ -438,7 +689,7 @@ async def export_detect_job_to_executive_pdf(request_id: str):
         build_executive_pdf(
             output_path=output_path,
             vendor_results=job["results"],
-            registry_by_domain=get_by_domain(),
+            registry_by_domain=get_active_by_domain(),
             mttd_seconds=mttd,
             drift_index=drift,
         )

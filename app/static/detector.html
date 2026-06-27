@@ -35,6 +35,87 @@
     font-size: 19px; font-weight: 700; letter-spacing: 0.01em; margin: 0;
     display: flex; align-items: center; gap: 10px;
   }
+
+  /* --- Tab navigation: Scan vs Vendors --- */
+  .main-tabs { display: flex; gap: 4px; margin: 18px 0 16px; border-bottom: 1px solid var(--line); }
+  .main-tabs button {
+    background: none; border: none; color: var(--muted); font-size: 13.5px; font-weight: 600;
+    padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .main-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .main-tabs button:hover:not(.active) { color: var(--text); }
+
+  /* --- Vendors tab: list view --- */
+  .vendor-table-row {
+    display: grid; grid-template-columns: 1.5fr 1.3fr 0.8fr 0.9fr 1fr auto;
+    gap: 10px; align-items: center; padding: 12px 14px; border: 1px solid var(--line);
+    border-radius: 8px; margin-bottom: 8px; background: var(--panel-raised); cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .vendor-table-row:hover { border-color: var(--accent); }
+  .vendor-table-row.header-row {
+    background: none; border: none; cursor: default; font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.03em; padding: 0 14px 8px;
+  }
+  .vendor-table-row .v-name { font-weight: 600; font-size: 13.5px; }
+  .vendor-table-row .v-domain { color: var(--muted); font-size: 12px; }
+  .vendor-table-row .v-score-badge {
+    font-weight: 700; font-size: 13px; padding: 3px 8px; border-radius: 5px; display: inline-block;
+  }
+  .vendor-table-row .v-mode-pill {
+    font-size: 10.5px; padding: 3px 8px; border-radius: 10px; display: inline-block; text-align: center;
+  }
+  .vendor-table-row .v-mode-pill.continuous { background: var(--accent-dim); color: var(--accent); }
+  .vendor-table-row .v-mode-pill.ad_hoc { background: rgba(107,120,137,0.15); color: var(--muted); }
+  .vendor-empty-state { color: var(--muted); font-size: 13px; text-align: center; padding: 30px 0; }
+  .vendor-list-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+
+  /* --- Vendor detail / edit panel --- */
+  .vendor-detail-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100;
+    display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; overflow-y: auto;
+  }
+  .vendor-detail-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    max-width: 720px; width: 100%; padding: 28px; position: relative;
+  }
+  .vendor-detail-card .close-btn {
+    position: absolute; top: 18px; right: 18px; background: none; border: none;
+    color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; padding: 4px;
+  }
+  .vendor-detail-card .close-btn:hover { color: var(--text); }
+  .vendor-detail-header { margin-bottom: 18px; padding-right: 30px; }
+  .vendor-detail-header h2 { margin: 0 0 4px; font-size: 18px; }
+  .vendor-detail-header .domain { color: var(--muted); font-size: 12.5px; }
+  .vendor-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+  .vendor-detail-actions button {
+    flex: 1; min-width: 130px; padding: 9px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 600;
+    cursor: pointer; border: 1px solid var(--line); background: var(--panel-raised); color: var(--text);
+  }
+  .vendor-detail-actions button:hover { border-color: var(--accent); }
+  .vendor-detail-actions button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .vendor-detail-section { margin-bottom: 20px; }
+  .vendor-detail-section h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted);
+    margin: 0 0 10px;
+  }
+  .vendor-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .vendor-edit-grid.full { grid-template-columns: 1fr; }
+  .vendor-edit-grid label { font-size: 11.5px; color: var(--muted); display: block; margin-bottom: 5px; }
+  .vendor-edit-grid input, .vendor-edit-grid select {
+    width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; color: var(--text); font-size: 13px;
+  }
+  .history-row {
+    display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
+  }
+  .history-row:last-child { border-bottom: none; }
+  .history-row .h-summary { color: var(--muted); flex: 1; margin: 0 12px; }
+  .history-row .h-time { color: var(--muted); flex-shrink: 0; font-size: 11px; }
+  .save-status { font-size: 12px; margin-top: 10px; }
+  .save-status.ok { color: var(--accent); }
+  .save-status.err { color: var(--danger); }
   .pulse-dot {
     width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
     box-shadow: 0 0 0 0 rgba(61,220,151,0.6); animation: pulse 2s infinite;
@@ -232,7 +313,6 @@
   .status-pill { font-size: 9.5px; padding: 2px 8px; border-radius: 20px; font-weight: 700; text-align: center; }
   .status-pill.ACTIVE { background: rgba(61,220,151,0.15); color: var(--accent); }
   .status-pill.BYO_KEY { background: rgba(232,165,61,0.15); color: var(--warn); }
-  .status-pill.NOT_IMPLEMENTED { background: rgba(255,255,255,0.05); color: var(--muted); }
   .priority-pill { font-size: 10px; font-weight: 600; }
   .priority-pill.High { color: var(--danger); }
   .priority-pill.Medium { color: var(--warn); }
@@ -278,6 +358,13 @@
     for automated re-scans with score-drop alerts. No login required. Passive checks only.
   </p>
 
+  <div class="main-tabs">
+    <button class="active" id="tab-scan-btn" data-tab="scan">🔍 Scan</button>
+    <button id="tab-vendors-btn" data-tab="vendors">📋 Vendors</button>
+  </div>
+
+  <div id="tab-scan">
+
   <!-- KPI cards -->
   <div class="kpi-grid" id="kpi-grid">
     <div class="kpi-card"><div class="kpi-value" id="kpi-total-vendors">—</div><div class="kpi-label">Monitored Vendors</div></div>
@@ -289,12 +376,11 @@
 
   <!-- Detector Registry Matrix -->
   <div class="panel">
-    <p class="panel-title">📋 Full Detector Registry (35 slots across 10 domains)</p>
+    <p class="panel-title">📋 Active Detector Registry</p>
     <div class="registry-toggle">
-      <button class="active" data-filter="all">All (35)</button>
+      <button class="active" data-filter="all">All</button>
       <button data-filter="ACTIVE">Active</button>
       <button data-filter="BYO_KEY">Needs API Key</button>
-      <button data-filter="NOT_IMPLEMENTED">Not Implemented</button>
     </div>
     <div id="registry-content">Loading registry…</div>
   </div>
@@ -394,6 +480,93 @@
     not credential-dump databases or dark-web content. Phishing detector uses public certificate
     transparency logs only. All checks are passive; no intrusive testing is performed against vendor infrastructure.
   </p>
+  </div><!-- /tab-scan -->
+
+  <div id="tab-vendors" style="display:none;">
+    <div class="panel">
+      <div class="vendor-list-toolbar">
+        <p class="panel-title" style="margin:0;">📋 Vendor Inventory</p>
+        <button class="export-btn" id="refresh-vendors-btn">↻ Refresh</button>
+      </div>
+      <div class="vendor-table-row header-row">
+        <div>Vendor</div><div>Domain</div><div>Score</div><div>Rating</div><div>Monitoring</div><div></div>
+      </div>
+      <div id="vendor-list-content"><p class="vendor-empty-state">Loading vendors…</p></div>
+    </div>
+  </div><!-- /tab-vendors -->
+
+  <div class="vendor-detail-backdrop" id="vendor-detail-backdrop" style="display:none;">
+    <div class="vendor-detail-card">
+      <button class="close-btn" id="vendor-detail-close-btn">✕</button>
+      <div class="vendor-detail-header">
+        <h2 id="vd-name">—</h2>
+        <div class="domain" id="vd-domain">—</div>
+      </div>
+
+      <div class="vendor-detail-actions">
+        <button id="vd-rescan-btn">🔄 Scan Now</button>
+        <button id="vd-download-btn">⬇ Download Last Report</button>
+        <button class="danger" id="vd-delete-btn">🗑 Delete Vendor</button>
+      </div>
+
+      <div class="vendor-detail-section">
+        <h3>Edit Vendor</h3>
+        <div class="vendor-edit-grid">
+          <div>
+            <label>Vendor Name</label>
+            <input type="text" id="vd-edit-name">
+          </div>
+          <div>
+            <label>Domain</label>
+            <input type="text" id="vd-edit-domain">
+          </div>
+        </div>
+      </div>
+
+      <div class="vendor-detail-section">
+        <h3>Monitoring Settings</h3>
+        <div class="vendor-edit-grid">
+          <div>
+            <label>Mode</label>
+            <select id="vd-edit-mode">
+              <option value="ad_hoc">Ad-Hoc (manual scans only)</option>
+              <option value="continuous">Continuous Monitoring</option>
+            </select>
+          </div>
+          <div>
+            <label>Frequency</label>
+            <select id="vd-edit-frequency">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </div>
+          <div>
+            <label>Alert Threshold (point drop)</label>
+            <input type="number" id="vd-edit-threshold" min="1" max="100">
+          </div>
+          <div>
+            <label>Webhook URL (optional)</label>
+            <input type="text" id="vd-edit-webhook" placeholder="https://...">
+          </div>
+        </div>
+        <div class="vendor-edit-grid full" style="margin-top:12px;">
+          <div>
+            <label>Detector Types (comma-separated, e.g. vulnerability,exploitation)</label>
+            <input type="text" id="vd-edit-detectors" placeholder="vulnerability">
+          </div>
+        </div>
+      </div>
+
+      <button class="export-btn" id="vd-save-btn" style="width:100%;">💾 Save Changes</button>
+      <div class="save-status" id="vd-save-status"></div>
+
+      <div class="vendor-detail-section" style="margin-top:24px;">
+        <h3>Scan History</h3>
+        <div id="vd-history-content"><p class="vendor-empty-state">No scan history yet.</p></div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -494,7 +667,7 @@ function renderRegistry() {
 
     filtered.forEach(d => {
       const row = document.createElement('div');
-      row.className = 'registry-row' + (d.implementation_status === 'NOT_IMPLEMENTED' || d.implementation_status === 'BYO_KEY' ? ' clickable' : '');
+      row.className = 'registry-row' + (d.implementation_status === 'BYO_KEY' ? ' clickable' : '');
       row.innerHTML = `
         <div class="det-id">${d.det_id}</div>
         <div>${d.name}</div>
@@ -772,6 +945,208 @@ document.getElementById('export-btn').addEventListener('click', () => {
 document.getElementById('export-pdf-btn').addEventListener('click', () => {
   if (!currentRequestId) return;
   window.location.href = `/api/detect/${currentRequestId}/export-executive-pdf`;
+});
+
+// ============================================================
+// Vendors tab
+// ============================================================
+const tabScanBtn = document.getElementById('tab-scan-btn');
+const tabVendorsBtn = document.getElementById('tab-vendors-btn');
+const tabScan = document.getElementById('tab-scan');
+const tabVendors = document.getElementById('tab-vendors');
+const vendorListContent = document.getElementById('vendor-list-content');
+const vendorDetailBackdrop = document.getElementById('vendor-detail-backdrop');
+
+function switchTab(tab) {
+  const isScan = tab === 'scan';
+  tabScan.style.display = isScan ? 'block' : 'none';
+  tabVendors.style.display = isScan ? 'none' : 'block';
+  tabScanBtn.classList.toggle('active', isScan);
+  tabVendorsBtn.classList.toggle('active', !isScan);
+  if (!isScan) loadVendorList();
+}
+tabScanBtn.addEventListener('click', () => switchTab('scan'));
+tabVendorsBtn.addEventListener('click', () => switchTab('vendors'));
+document.getElementById('refresh-vendors-btn').addEventListener('click', loadVendorList);
+
+const scoreColor = (score) => {
+  if (score === null || score === undefined) return 'var(--muted)';
+  if (score < 30) return 'var(--danger)';
+  if (score < 60) return 'var(--warn)';
+  return 'var(--accent)';
+};
+
+async function loadVendorList() {
+  vendorListContent.innerHTML = '<p class="vendor-empty-state">Loading vendors…</p>';
+  try {
+    const resp = await fetch('/api/vendors');
+    const data = await resp.json();
+    if (!data.vendors.length) {
+      vendorListContent.innerHTML = '<p class="vendor-empty-state">No vendors yet. Run a scan from the Scan tab to add one.</p>';
+      return;
+    }
+    vendorListContent.innerHTML = data.vendors.map(v => {
+      const color = scoreColor(v.latest_score);
+      const scoreLabel = v.latest_score !== null && v.latest_score !== undefined ? `${v.latest_score}/100` : '—';
+      const modeLabel = v.monitoring_mode === 'continuous' ? `Continuous (${v.monitoring_frequency || 'daily'})` : 'Ad-Hoc';
+      return `<div class="vendor-table-row" data-vendor-id="${v.vendor_id}">
+        <div class="v-name">${v.name}</div>
+        <div class="v-domain">${v.domain}</div>
+        <div class="v-score-badge" style="color:${color};">${scoreLabel}</div>
+        <div>${v.latest_rating || '—'}</div>
+        <div><span class="v-mode-pill ${v.monitoring_mode}">${modeLabel}</span></div>
+        <div style="color:var(--muted);font-size:11px;">→</div>
+      </div>`;
+    }).join('');
+    vendorListContent.querySelectorAll('.vendor-table-row').forEach(row => {
+      row.addEventListener('click', () => openVendorDetail(row.dataset.vendorId));
+    });
+  } catch (err) {
+    vendorListContent.innerHTML = '<p class="vendor-empty-state">Could not load vendor list.</p>';
+  }
+}
+
+let currentVendorId = null;
+
+async function openVendorDetail(vendorId) {
+  currentVendorId = vendorId;
+  vendorDetailBackdrop.style.display = 'flex';
+  document.getElementById('vd-save-status').textContent = '';
+  document.getElementById('vd-name').textContent = 'Loading…';
+  document.getElementById('vd-domain').textContent = '';
+  document.getElementById('vd-history-content').innerHTML = '<p class="vendor-empty-state">Loading…</p>';
+
+  try {
+    const resp = await fetch(`/api/vendors/${vendorId}`);
+    if (!resp.ok) throw new Error('Vendor not found');
+    const data = await resp.json();
+    const { vendor, config, score_history } = data;
+
+    document.getElementById('vd-name').textContent = vendor.name;
+    document.getElementById('vd-domain').textContent = vendor.domain;
+    document.getElementById('vd-edit-name').value = vendor.name;
+    document.getElementById('vd-edit-domain').value = vendor.domain;
+
+    document.getElementById('vd-edit-mode').value = config ? config.mode : 'ad_hoc';
+    document.getElementById('vd-edit-frequency').value = config ? config.frequency : 'daily';
+    document.getElementById('vd-edit-threshold').value = config ? config.alert_threshold_points : 20;
+    document.getElementById('vd-edit-webhook').value = config ? (config.webhook_url || '') : '';
+    document.getElementById('vd-edit-detectors').value = config ? config.detector_types.join(',') : 'vulnerability';
+
+    if (!score_history.length) {
+      document.getElementById('vd-history-content').innerHTML = '<p class="vendor-empty-state">No scans recorded yet. Click "Scan Now" to run one.</p>';
+    } else {
+      document.getElementById('vd-history-content').innerHTML = score_history.slice(0, 15).map(h => {
+        const scoreText = h.score !== null && h.score !== undefined ? `${h.score}/100` : (h.rating_letter || '—');
+        const when = new Date(h.recorded_at).toLocaleString();
+        return `<div class="history-row">
+          <span style="color:${scoreColor(h.score)};font-weight:600;flex-shrink:0;">${h.detector_type}: ${scoreText}</span>
+          <span class="h-summary">${h.summary || ''}</span>
+          <span class="h-time">${when}</span>
+        </div>`;
+      }).join('');
+    }
+  } catch (err) {
+    document.getElementById('vd-name').textContent = 'Error loading vendor';
+  }
+}
+
+document.getElementById('vendor-detail-close-btn').addEventListener('click', () => {
+  vendorDetailBackdrop.style.display = 'none';
+  currentVendorId = null;
+});
+vendorDetailBackdrop.addEventListener('click', (e) => {
+  if (e.target === vendorDetailBackdrop) {
+    vendorDetailBackdrop.style.display = 'none';
+    currentVendorId = null;
+  }
+});
+
+document.getElementById('vd-save-btn').addEventListener('click', async () => {
+  if (!currentVendorId) return;
+  const statusEl = document.getElementById('vd-save-status');
+  statusEl.textContent = 'Saving…';
+  statusEl.className = 'save-status';
+
+  const detectorTypes = document.getElementById('vd-edit-detectors').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+  const payload = {
+    name: document.getElementById('vd-edit-name').value.trim(),
+    domain: document.getElementById('vd-edit-domain').value.trim(),
+    monitoring: {
+      mode: document.getElementById('vd-edit-mode').value,
+      frequency: document.getElementById('vd-edit-frequency').value,
+      alert_threshold_points: parseInt(document.getElementById('vd-edit-threshold').value, 10) || 20,
+      webhook_url: document.getElementById('vd-edit-webhook').value.trim() || null,
+      detector_types: detectorTypes.length ? detectorTypes : ['vulnerability'],
+    },
+  };
+
+  try {
+    const resp = await fetch(`/api/vendors/${currentVendorId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Save failed.');
+    statusEl.textContent = '✓ Saved.';
+    statusEl.className = 'save-status ok';
+    loadVendorList();
+    openVendorDetail(currentVendorId);
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.className = 'save-status err';
+  }
+});
+
+document.getElementById('vd-rescan-btn').addEventListener('click', async () => {
+  if (!currentVendorId) return;
+  const btn = document.getElementById('vd-rescan-btn');
+  const original = btn.textContent;
+  btn.textContent = '⏳ Scanning…';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/vendors/${currentVendorId}/rescan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Scan failed to start.');
+    // Poll until the rescan job completes, then refresh the detail view.
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const jobResp = await fetch(`/api/detect/${data.request_id}`);
+      const job = await jobResp.json();
+      if (job.status === 'complete' || job.status === 'failed') break;
+    }
+    openVendorDetail(currentVendorId);
+    loadVendorList();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.textContent = original;
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('vd-download-btn').addEventListener('click', () => {
+  if (!currentVendorId) return;
+  window.location.href = `/api/vendors/${currentVendorId}/last-report`;
+});
+
+document.getElementById('vd-delete-btn').addEventListener('click', async () => {
+  if (!currentVendorId) return;
+  if (!confirm('Delete this vendor and all of its scan history? This cannot be undone.')) return;
+  try {
+    const resp = await fetch(`/api/vendors/${currentVendorId}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error('Delete failed.');
+    vendorDetailBackdrop.style.display = 'none';
+    currentVendorId = null;
+    loadVendorList();
+  } catch (err) {
+    alert(err.message);
+  }
 });
 </script>
 </body>

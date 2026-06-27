@@ -81,6 +81,20 @@ def _extract_cell_url(cell) -> str | None:
     return text
 
 
+def clean_url(raw: str | None) -> str | None:
+    """Public wrapper around the same URL-cleaning logic used during Excel
+    ingestion, so other entry points (e.g. the single-vendor "Add a Vendor"
+    flow in main.py) validate/normalize a website URL identically rather
+    than duplicating this logic."""
+    return _clean_url(raw)
+
+
+def extract_domain(url: str) -> str:
+    """Public wrapper around the same domain-extraction logic used during
+    Excel ingestion; see clean_url's docstring for why this is exposed."""
+    return _extract_domain(url)
+
+
 def _clean_url(raw: str | None) -> str | None:
     if not raw or not isinstance(raw, str):
         return None

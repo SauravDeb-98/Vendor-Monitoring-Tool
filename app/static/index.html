@@ -21,16 +21,16 @@
     margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg); color: var(--text); min-height: 100vh;
   }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 20px 80px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 80px 20px 80px; position: relative; }
   h1 { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
   .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 32px; line-height: 1.5; }
   .card {
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 28px; margin-bottom: 20px;
+    padding: 28px; margin-bottom: 20px; position: relative;
   }
   .card h2 { font-size: 16px; margin: 0 0 14px; color: var(--accent-light); }
   label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-  input[type="file"], input[type="password"] {
+  input[type="text"], input[type="url"], input[type="password"] {
     width: 100%; padding: 10px 12px; background: #0B1220; border: 1px solid var(--border);
     border-radius: 8px; color: var(--text); font-size: 14px; margin-bottom: 16px;
   }
@@ -59,13 +59,82 @@
   a { color: var(--accent-light); }
   .badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
   .pill { font-size: 11px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 20px; color: var(--muted); }
+
+  /* --- Top-right detector tool banner (Update item #2) --- */
+  .detector-banner {
+    position: fixed; top: 16px; right: 16px; z-index: 50;
+    background: linear-gradient(135deg, #1d4ed8, #2563EB);
+    border: 1px solid #3b82f6; border-radius: 10px;
+    padding: 10px 16px; box-shadow: 0 4px 16px rgba(37,99,235,0.45);
+    font-size: 13px; font-weight: 600; text-decoration: none; color: #fff;
+    display: inline-flex; align-items: center; gap: 8px;
+    max-width: calc(100vw - 32px);
+  }
+  .detector-banner:hover { background: linear-gradient(135deg, #1e40af, #1d4ed8); }
+  .detector-banner .arrow { transition: transform 0.15s; }
+  .detector-banner:hover .arrow { transform: translateX(3px); }
+  @media (max-width: 700px) {
+    .detector-banner { position: static; display: flex; justify-content: center; text-align: center;
+      margin: 0 0 20px; width: 100%; }
+    .wrap { padding-top: 24px; }
+  }
+
+  /* --- Mode toggle: Add a Vendor vs Import a List (Update item #1) --- */
+  .mode-toggle { display: flex; gap: 8px; margin-bottom: 20px; }
+  .mode-toggle button {
+    width: auto; flex: 1; background: transparent; border: 1px solid var(--border);
+    color: var(--muted); padding: 10px 16px; font-weight: 600;
+  }
+  .mode-toggle button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .mode-toggle button:hover:not(.active) { border-color: var(--accent-light); color: var(--text); background: transparent; }
+
+  /* --- File picker: fixed so the hidden input can no longer escape layout
+     and overlap other controls (root cause of the original overlap bug:
+     the absolutely-positioned input had no positioned ancestor, so it was
+     positioning itself against the document instead of this control). --- */
+  .file-picker-row { display: flex; gap: 10px; align-items: center; position: relative; margin-bottom: 16px; }
+  .file-picker-row input[type="file"] {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; overflow: hidden; cursor: pointer; margin: 0;
+  }
+  #choose-file-btn { width: auto; padding: 10px 18px; flex-shrink: 0; position: relative; z-index: 1; pointer-events: none; }
+  #chosen-filename { color: var(--muted); font-size: 13px; position: relative; z-index: 1; pointer-events: none; }
+
+  .discovery-note { font-size: 12px; padding: 8px 10px; border-radius: 6px; margin-top: -10px; margin-bottom: 16px; }
+  .discovery-note.medium { background: rgba(37,99,235,0.12); color: var(--accent-light); }
+  .discovery-note.low { background: rgba(202,138,4,0.12); color: #facc15; }
+
+  /* --- Inventory view (Update item #4) --- */
+  .inventory-toggle-link { display: block; text-align: center; font-size: 13px; margin: 18px 0 0; cursor: pointer; }
+  .inventory-list { margin-top: 6px; }
+  .inventory-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px;
+    background: #0B1220; cursor: pointer; transition: border-color 0.15s;
+  }
+  .inventory-row:hover { border-color: var(--accent-light); }
+  .inventory-row .v-name { font-weight: 600; font-size: 14px; }
+  .inventory-row .v-domain { color: var(--muted); font-size: 12px; }
+  .inventory-row .v-meta { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .inventory-row .v-score { font-size: 13px; color: var(--muted); }
+  .inventory-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
+  .inv-download-btn {
+    width: auto; padding: 6px 14px; font-size: 12px; background: var(--success); flex-shrink: 0;
+  }
+  .inv-download-btn:hover { background: #15803d; }
 </style>
 </head>
 <body>
+
+<a href="/detector.html" class="detector-banner">
+  &#128752; Looking for the Vendor Threat Detector &amp; Continuous Monitoring tool?
+  <span class="arrow">&#8594;</span>
+</a>
+
 <div class="wrap">
-  <h1>🛡️ Third-Party Vendor Risk Assessment</h1>
+  <h1>&#128737;&#65039; Third-Party Vendor Risk Assessment</h1>
   <p class="subtitle">
-    Upload your vendor list (Excel: <b>Vendor Name</b> + <b>Vendor Website Link</b> columns).
+    Add a vendor by name, or upload a vendor list (Excel: <b>Vendor Name</b> + <b>Vendor Website Link</b> columns).
     We'll run passive external OSINT scans, map findings against NIST, ISO 27001, DORA, and GDPR,
     and generate a scored PDF report.
   </p>
@@ -77,14 +146,33 @@
   </div>
 
   <div class="card" id="upload-card">
-    <h2>1. Upload Vendor List</h2>
-    <label for="file-input">Excel file (.xlsx)</label>
-    <div style="display:flex; gap:10px; align-items:center;">
-      <button type="button" id="choose-file-btn" style="width:auto; padding:10px 18px; flex-shrink:0;">Choose File</button>
-      <span id="chosen-filename" style="color:var(--muted); font-size:13px;">No file selected</span>
+    <div class="mode-toggle">
+      <button type="button" id="mode-single-btn" class="active">&#10133; Add a Vendor</button>
+      <button type="button" id="mode-bulk-btn">&#128196; Import a List</button>
     </div>
-    <input type="file" id="file-input" accept=".xlsx,.xls" style="position:absolute; width:1px; height:1px; opacity:0; overflow:hidden;">
-    <div class="hint">Only the "Vendor Name" and "Vendor Website Link" columns are read; everything else is ignored.</div>
+
+    <!-- Mode: single vendor -->
+    <div id="mode-single">
+      <h2>Add a Vendor</h2>
+      <label for="vendor-name-input">Vendor name</label>
+      <input type="text" id="vendor-name-input" placeholder="e.g. Acme Corporation">
+
+      <label for="vendor-website-input">Vendor website (optional)</label>
+      <input type="url" id="vendor-website-input" placeholder="e.g. https://acme.com">
+      <div class="hint">Leave blank and we'll try to find the vendor's website automatically (best-effort; please verify the result).</div>
+    </div>
+
+    <!-- Mode: bulk Excel import -->
+    <div id="mode-bulk" style="display:none;">
+      <h2>Import Vendor List</h2>
+      <label for="file-input">Excel file (.xlsx)</label>
+      <div class="file-picker-row">
+        <button type="button" id="choose-file-btn">Choose File</button>
+        <span id="chosen-filename">No file selected</span>
+        <input type="file" id="file-input" accept=".xlsx,.xls">
+      </div>
+      <div class="hint" style="margin-top:0;">Only the "Vendor Name" and "Vendor Website Link" columns are read; everything else is ignored.</div>
+    </div>
 
     <label for="api-key-input">Claude API key (optional)</label>
     <input type="password" id="api-key-input" placeholder="sk-ant-... (leave blank to use rule-based narratives)">
@@ -100,11 +188,12 @@
 
   <div class="card" id="result-card" style="display:none;"></div>
 
-  <p style="text-align:center;margin-top:24px;">
-    <a href="/detector.html" style="color:var(--accent);font-size:13px;text-decoration:none;">
-      🛰️ Looking for the Vendor Threat Detector & Continuous Monitoring tool? →
-    </a>
-  </p>
+  <p class="inventory-toggle-link" id="inventory-toggle">&#128203; View your vendor inventory &#8594;</p>
+  <div class="card" id="inventory-card" style="display:none;">
+    <h2>Your Vendor Inventory</h2>
+    <div class="hint" style="margin-top:-6px;">Click a vendor to download its most recent report. Reports stay available for 7 days after each assessment.</div>
+    <div id="inventory-list" class="inventory-list"></div>
+  </div>
 
   <p class="footer-note">
     External, passive assessment only — no port scanning or intrusive testing is performed against vendor infrastructure.
@@ -121,15 +210,32 @@ const tierColors = {
   "Informational": "#2563EB"
 };
 
+// --- Mode toggle ---
+const modeSingleBtn = document.getElementById('mode-single-btn');
+const modeBulkBtn = document.getElementById('mode-bulk-btn');
+const modeSingle = document.getElementById('mode-single');
+const modeBulk = document.getElementById('mode-bulk');
+let currentMode = 'single';
+
+function setMode(mode) {
+  currentMode = mode;
+  const isSingle = mode === 'single';
+  modeSingle.style.display = isSingle ? 'block' : 'none';
+  modeBulk.style.display = isSingle ? 'none' : 'block';
+  modeSingleBtn.classList.toggle('active', isSingle);
+  modeBulkBtn.classList.toggle('active', !isSingle);
+  errorArea.innerHTML = '';
+}
+modeSingleBtn.addEventListener('click', () => setMode('single'));
+modeBulkBtn.addEventListener('click', () => setMode('bulk'));
+
 const scanBtn = document.getElementById('scan-btn');
 const fileInput = document.getElementById('file-input');
 const apiKeyInput = document.getElementById('api-key-input');
 const chooseFileBtn = document.getElementById('choose-file-btn');
 const chosenFilename = document.getElementById('chosen-filename');
-
-chooseFileBtn.addEventListener('click', () => {
-  fileInput.click();
-});
+const vendorNameInput = document.getElementById('vendor-name-input');
+const vendorWebsiteInput = document.getElementById('vendor-website-input');
 
 fileInput.addEventListener('change', () => {
   const file = fileInput.files[0];
@@ -143,6 +249,15 @@ const resultCard = document.getElementById('result-card');
 scanBtn.addEventListener('click', async () => {
   errorArea.innerHTML = '';
   resultCard.style.display = 'none';
+
+  if (currentMode === 'bulk') {
+    await runBulkScan();
+  } else {
+    await runSingleScan();
+  }
+});
+
+async function runBulkScan() {
   const file = fileInput.files[0];
   if (!file) {
     errorArea.innerHTML = '<div class="error">Please select an Excel file first.</div>';
@@ -171,7 +286,46 @@ scanBtn.addEventListener('click', async () => {
     scanBtn.disabled = false;
     progressArea.innerHTML = '';
   }
-});
+}
+
+async function runSingleScan() {
+  const name = vendorNameInput.value.trim();
+  if (!name) {
+    errorArea.innerHTML = '<div class="error">Please enter a vendor name.</div>';
+    return;
+  }
+
+  scanBtn.disabled = true;
+  progressArea.innerHTML = '<div class="progress-row"><div class="spinner"></div><span>Looking up vendor...</span></div>';
+
+  const formData = new FormData();
+  formData.append('vendor_name', name);
+  if (vendorWebsiteInput.value.trim()) {
+    formData.append('vendor_website', vendorWebsiteInput.value.trim());
+  }
+  if (apiKeyInput.value.trim()) {
+    formData.append('claude_api_key', apiKeyInput.value.trim());
+  }
+
+  try {
+    const resp = await fetch('/api/scan-single', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Scan failed to start.');
+
+    if (data.discovered_domain) {
+      const confClass = data.discovery_confidence === 'medium' ? 'medium' : 'low';
+      errorArea.innerHTML = `<div class="discovery-note ${confClass}">Auto-detected website: <b>${data.discovered_domain}</b> (${data.discovery_confidence} confidence). If this is wrong, cancel and re-run with the correct website.</div>`;
+    }
+
+    const jobId = data.job_id;
+    progressArea.innerHTML = `<div class="progress-row"><div class="spinner"></div><span>Scanning ${name}...</span></div>`;
+    await pollJob(jobId);
+  } catch (err) {
+    errorArea.innerHTML = `<div class="error">${err.message}</div>`;
+    scanBtn.disabled = false;
+    progressArea.innerHTML = '';
+  }
+}
 
 async function pollJob(jobId) {
   while (true) {
@@ -192,6 +346,7 @@ async function pollJob(jobId) {
       scanBtn.disabled = false;
       progressArea.innerHTML = '';
       showResults(jobId, job.summary || []);
+      refreshInventory();  // keep inventory in sync once a new scan completes
       return;
     }
   }
@@ -210,7 +365,7 @@ function showResults(jobId, summary) {
 
   resultCard.innerHTML = `
     <div class="success-box">
-      <h3>✅ Assessment Complete</h3>
+      <h3>&#9989; Assessment Complete</h3>
       <p style="color:var(--muted);font-size:13px;">${summary.length} vendor(s) assessed.</p>
     </div>
     <table class="summary-table">
@@ -218,8 +373,64 @@ function showResults(jobId, summary) {
       <tbody>${rows}</tbody>
     </table>
     <button class="download-btn" onclick="window.location.href='/api/jobs/${jobId}/report'">Download PDF Report</button>
-    <div class="hint" style="margin-top:10px;text-align:center;">For your confidentiality, this report is automatically deleted from our server 30 minutes after generation. Please download it now.</div>
+    <div class="hint" style="margin-top:10px;text-align:center;">This report stays downloadable from your vendor inventory for 7 days after generation.</div>
   `;
+}
+
+// --- Vendor inventory (Update item #4: click a vendor, download anytime within retention) ---
+const inventoryToggle = document.getElementById('inventory-toggle');
+const inventoryCard = document.getElementById('inventory-card');
+const inventoryList = document.getElementById('inventory-list');
+
+inventoryToggle.addEventListener('click', () => {
+  const showing = inventoryCard.style.display !== 'none';
+  inventoryCard.style.display = showing ? 'none' : 'block';
+  inventoryToggle.innerHTML = showing ? '&#128203; View your vendor inventory &#8594;' : '&#128203; Hide vendor inventory';
+  if (!showing) refreshInventory();
+});
+
+async function refreshInventory() {
+  try {
+    const resp = await fetch('/api/risk-assessment/vendors');
+    const data = await resp.json();
+    renderInventory(data.vendors || []);
+  } catch (err) {
+    inventoryList.innerHTML = '<div class="inventory-empty">Could not load inventory.</div>';
+  }
+}
+
+function renderInventory(vendors) {
+  if (!vendors.length) {
+    inventoryList.innerHTML = '<div class="inventory-empty">No vendors assessed yet. Add a vendor or import a list above to get started.</div>';
+    return;
+  }
+  inventoryList.innerHTML = vendors.map(v => {
+    const latest = v.latest_report;
+    const color = latest && tierColors[latest.tier] ? tierColors[latest.tier] : '#94A3B8';
+    const scoreLabel = latest ? `${latest.score}/100` : 'No report yet';
+    const downloadHtml = latest
+      ? `<button class="inv-download-btn" data-vendor="${v.vendor_id}" data-report="${latest.report_id}">Download</button>`
+      : '';
+    return `<div class="inventory-row">
+      <div>
+        <div class="v-name">${v.name}</div>
+        <div class="v-domain">${v.domain}</div>
+      </div>
+      <div class="v-meta">
+        <span class="v-score" style="color:${color};">${scoreLabel}</span>
+        ${downloadHtml}
+      </div>
+    </div>`;
+  }).join('');
+
+  inventoryList.querySelectorAll('.inv-download-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const vendorId = btn.dataset.vendor;
+      const reportId = btn.dataset.report;
+      window.location.href = `/api/risk-assessment/vendors/${vendorId}/reports/${reportId}/download`;
+    });
+  });
 }
 </script>
 </body>
